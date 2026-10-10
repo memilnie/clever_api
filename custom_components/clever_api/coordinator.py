@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -19,6 +20,7 @@ from .clever.exceptions import (
     CleverAuthenticationError,
     CleverConnectionError,
 )
+from .clever.history import merge_history
 from .clever.models import (
     ActiveTransaction,
     ChargePointState,
@@ -41,6 +43,12 @@ from .const import (
 )
 
 SLOW_REFRESH_SECONDS = 60 * 60
+HISTORY_STORAGE_VERSION = 1
+
+
+def history_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the store holding an account's charging sessions and surcharge rates."""
+    return Store(hass, HISTORY_STORAGE_VERSION, f"{DOMAIN}.history.{entry_id}")
 
 
 class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
@@ -57,6 +65,8 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         self._slow_refresh_at = 0.0
         self._slow: dict[str, Any] | None = None
         self._failures = 0
+        self._history_store = history_store(hass, entry.entry_id)
+        self._history: dict[str, Any] | None = None
         # Read-only entries get no switches and are skipped by the control actions.
         self.read_only = bool(entry.data.get(CONF_READ_ONLY, False))
         self.platforms: list[Any] = []
@@ -78,6 +88,22 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         data[CONF_REFRESH_TOKEN] = refresh_token
         data[CONF_FIREBASE_UID] = firebase_uid
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
+
+    async def _async_save_history(self) -> None:
+        """Add newly reported sessions and this month's surcharge rate to the store."""
+        assert self._slow is not None
+        if self._history is None:
+            self._history = await self._history_store.async_load() or {}
+        installations: tuple[Installation, ...] = self._slow["installations"]
+        self._history, changed = merge_history(
+            self._history,
+            self._slow["records"],
+            self._slow["surcharge"],
+            installations[0].charge_box_id if installations else None,
+            dt_util.now(),
+        )
+        if changed:
+            await self._history_store.async_save(self._history)
 
     async def async_refresh_configuration(self) -> None:
         """Refresh REST configuration after a control request."""
@@ -114,6 +140,7 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
                     ),
                 }
                 self._slow_refresh_at = time.monotonic() + SLOW_REFRESH_SECONDS
+                await self._async_save_history()
 
             chargepoint_data, transaction_data = await asyncio.gather(
                 self.client.get_home_chargepoints(),

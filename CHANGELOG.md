@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 (2026-10-10)
+---
+ - Keep completed charging sessions and each month's energy surcharge rate in Home Assistant's storage, so earlier sessions and rates remain available for statistics. The history is deleted when the account is removed.
+
 ## 0.5.0 (2026-10-10)
 ---
  - Add price figures for comparing Clever with other electricity prices: monthly subscription fee, energy surcharge this month, and effective price per kWh this month.

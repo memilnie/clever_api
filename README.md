@@ -89,6 +89,15 @@ are not part of these figures. The effective price is therefore what Clever
 costs on top, on the assumption that the refund covers what the electricity
 cost you.
 
+## Charging history
+
+Completed charging sessions (start, stop, energy, charge point and whether it
+was the home charger) and each month's energy surcharge rate are kept in
+`.storage/clever_api.history.<entry id>` in the Home Assistant configuration
+folder. Sessions are added as Clever reports them and are kept after they drop
+out of Clever's response. The file is deleted when the account is removed from
+Home Assistant.
+
 ## Actions
 
 The actions are only available when at least one account is not read-only.

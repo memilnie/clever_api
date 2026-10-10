@@ -1,0 +1,151 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Forbind til Clever",
+        "description": "Opret eller flyt din konto i Clever-appen, før du forbinder den til Home Assistant.",
+        "data": {
+          "email": "E-mail",
+          "password": "Adgangskode",
+          "subscription_fee": "Månedlig abonnementspris",
+          "read_only": "Kun læsning (ingen kontakter eller styring)"
+        },
+        "data_description": {
+          "subscription_fee": "Kroner pr. måned. Clever One koster 849 med ladeboks og 999 uden (fra 1. september 2026).",
+          "read_only": "Home Assistant læser kun data og kan ikke ændre opladningen. Det kan ændres senere under indstillinger."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Forbind til Clever igen",
+        "description": "Indtast dine nuværende loginoplysninger til Clever-appen.",
+        "data": {
+          "email": "E-mail",
+          "password": "Adgangskode"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke forbinde til Clever",
+      "invalid_auth": "Forkert e-mail eller adgangskode",
+      "unknown": "Uventet fejl"
+    },
+    "abort": {
+      "already_configured": "Denne Clever-konto er allerede sat op",
+      "reauth_successful": "Login til Clever er opdateret",
+      "wrong_account": "Loginoplysningerne tilhører en anden Clever-konto"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Indstillinger for Clever",
+        "data": {
+          "subscription_fee": "Månedlig abonnementspris",
+          "read_only": "Kun læsning (ingen kontakter eller styring)"
+        },
+        "data_description": {
+          "subscription_fee": "Kroner pr. måned. Clever One koster 849 med ladeboks og 999 uden (fra 1. september 2026).",
+          "read_only": "Slås det fra, tilføjes kontakterne til forvarmning og boost samt handlingerne til intelligent opladning."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "energy_this_month": {
+        "name": "Forbrug denne måned"
+      },
+      "energy_surcharge": {
+        "name": "Energitillæg pr. kWh"
+      },
+      "estimated_price": {
+        "name": "Anslået samlet pris denne måned"
+      },
+      "subscription_fee": {
+        "name": "Månedlig abonnementspris"
+      },
+      "energy_surcharge_cost": {
+        "name": "Energitillæg denne måned"
+      },
+      "effective_price_per_kwh": {
+        "name": "Reel pris pr. kWh denne måned"
+      },
+      "energy_this_month_home": {
+        "name": "Forbrug denne måned på ladeboksen"
+      },
+      "current_session_energy": {
+        "name": "Energi i denne opladning"
+      },
+      "session_target_energy": {
+        "name": "Mål for denne opladning"
+      },
+      "session_progress": {
+        "name": "Fremdrift i opladningen"
+      },
+      "session_duration": {
+        "name": "Varighed af opladningen"
+      },
+      "session_average_power": {
+        "name": "Gennemsnitlig effekt i opladningen"
+      },
+      "session_expected_completion": {
+        "name": "Forventet færdig"
+      },
+      "vehicle_battery_level": {
+        "name": "Bilens batteriniveau"
+      },
+      "charger_state": {
+        "name": "Ladeboksens tilstand"
+      }
+    },
+    "binary_sensor": {
+      "intelligent_charging": {
+        "name": "Intelligent opladning"
+      },
+      "charging": {
+        "name": "Lader"
+      },
+      "vehicle_connected": {
+        "name": "Bil tilsluttet"
+      }
+    },
+    "switch": {
+      "preheat": {
+        "name": "Forvarmning"
+      },
+      "boost": {
+        "name": "Spring intelligent opladning over"
+      }
+    }
+  },
+  "services": {
+    "enable_flex": {
+      "name": "Slå intelligent opladning til",
+      "description": "Sætter afgangstid og ønsket energi og slår derefter intelligent opladning til på ladeboksen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Clever-konto",
+          "description": "Den konto, der skal styres. Kan udelades, når der kun er én ladeboks."
+        },
+        "departure_time": {
+          "name": "Afgangstid",
+          "description": "Hvornår bilen skal være klar, som tt:mm."
+        },
+        "required_energy": {
+          "name": "Ønsket energi",
+          "description": "Hvor meget der skal lades inden afgang, i kWh."
+        }
+      }
+    },
+    "disable_flex": {
+      "name": "Slå intelligent opladning fra",
+      "description": "Slår intelligent opladning fra på ladeboksen.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Clever-konto",
+          "description": "Den konto, der skal styres. Kan udelades, når der kun er én ladeboks."
+        }
+      }
+    }
+  }
+}

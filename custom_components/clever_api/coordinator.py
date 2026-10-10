@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -31,8 +30,10 @@ from .clever.models import (
     Profile,
     summarize_consumption,
 )
+from .clever.polling import ACTIVE_INTERVAL, next_interval
 from .const import (
     CONF_FIREBASE_UID,
+    CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_FEE,
     DOMAIN,
@@ -43,7 +44,7 @@ SLOW_REFRESH_SECONDS = 60 * 60
 
 
 class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
-    """Fetch slow REST data hourly and live Firestore data every minute."""
+    """Fetch slow REST data hourly and live Firestore data at an adaptive pace."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.config_entry = entry
@@ -55,12 +56,16 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         )
         self._slow_refresh_at = 0.0
         self._slow: dict[str, Any] | None = None
+        self._failures = 0
+        # Read-only entries get no switches and are skipped by the control actions.
+        self.read_only = bool(entry.data.get(CONF_READ_ONLY, False))
+        self.platforms: list[Any] = []
         super().__init__(
             hass,
             LOGGER,
             config_entry=entry,
             name=DOMAIN,
-            update_interval=timedelta(minutes=1),
+            update_interval=ACTIVE_INTERVAL,
         )
 
     def _token_updated(self, refresh_token: str, firebase_uid: str) -> None:
@@ -117,6 +122,10 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         except CleverAuthenticationError as error:
             raise ConfigEntryAuthFailed("Clever authentication expired") from error
         except (CleverConnectionError, CleverApiError) as error:
+            self._failures += 1
+            self.update_interval = next_interval(
+                vehicle_active=False, consecutive_failures=self._failures
+            )
             raise UpdateFailed(str(error)) from error
 
         assert self._slow is not None
@@ -126,7 +135,7 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         month_start = local_now.replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
-        return CleverApiData(
+        data = CleverApiData(
             profile=self._slow["profile"],
             installations=installations,
             charging_profiles=self._slow["charging_profiles"],
@@ -144,3 +153,8 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
                 self.config_entry.data.get(CONF_SUBSCRIPTION_FEE, 0)
             ),
         )
+        self._failures = 0
+        self.update_interval = next_interval(
+            vehicle_active=data.active_home_transaction is not None
+        )
+        return data

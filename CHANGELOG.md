@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 (2026-10-10)
+---
+ - Add price figures for comparing Clever with other electricity prices: monthly subscription fee, energy surcharge this month, and effective price per kWh this month.
+ - Change the default subscription fee to 849 DKK (Clever One with a home charger from 1 September 2026).
+ - Add a read-only mode without switches and control actions. New accounts start read-only; existing entries keep their controls.
+ - Poll live data every five minutes when no vehicle is connected, and back off after failed requests.
+ - Rename the `enable_flex` fields to `departure_time` and `required_energy`. The earlier names remain accepted.
+ - Add Danish translations, and translated names and descriptions for the actions.
+ - Point the project links at this fork and stop the daily scheduled validation run.
+
 ## 0.4.0 (2026-08-24)
 ---
  - Expose active charging, vehicle connection, target energy, progress, duration, average power, expected completion, and vehicle battery level.

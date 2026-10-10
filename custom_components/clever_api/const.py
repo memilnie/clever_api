@@ -22,6 +22,11 @@ CONF_SUBSCRIPTION_FEE = "subscription_fee"
 CONF_DEPT_TIME = "depature_time"
 CONF_DESIRED_RANGE = "desired_range"
 CONF_PHASE_COUNT = "phase_count"
+CONF_READ_ONLY = "read_only"
+
+# Clever One with a home charger, per month, from 1 September 2026.
+# Without a home charger the fee is 999 DKK.
+DEFAULT_SUBSCRIPTION_FEE: Final = 849.0
 
 SERVICE_ENABLE_FLEX = "enable_flex"
 SERVICE_DISABLE_FLEX = "disable_flex"

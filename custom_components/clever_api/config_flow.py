@@ -22,9 +22,11 @@ from .const import (
     CONF_CHARGING_PROFILE_ID,
     CONF_CONNECTOR_ID,
     CONF_FIREBASE_UID,
+    CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_FEE,
     CONF_USER_ID,
+    DEFAULT_SUBSCRIPTION_FEE,
     DOMAIN,
     LOGGER,
 )
@@ -44,7 +46,11 @@ def _credentials_schema(email: str | None = None) -> vol.Schema:
         {
             email_key: str,
             vol.Required(CONF_PASSWORD): PASSWORD_SELECTOR,
-            vol.Optional(CONF_SUBSCRIPTION_FEE, default=799): vol.Coerce(float),
+            vol.Optional(
+                CONF_SUBSCRIPTION_FEE, default=DEFAULT_SUBSCRIPTION_FEE
+            ): vol.Coerce(float),
+            # New accounts start without controls; they can be enabled in the options.
+            vol.Optional(CONF_READ_ONLY, default=True): bool,
         }
     )
 
@@ -94,8 +100,9 @@ class CleverApiConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             user_input[CONF_SUBSCRIPTION_FEE] = entry.data.get(
-                CONF_SUBSCRIPTION_FEE, 799
+                CONF_SUBSCRIPTION_FEE, DEFAULT_SUBSCRIPTION_FEE
             )
+            user_input[CONF_READ_ONLY] = entry.data.get(CONF_READ_ONLY, False)
             try:
                 data = await self._async_login(user_input)
             except CleverAuthenticationError:
@@ -170,12 +177,15 @@ class CleverApiConfigFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_CHARGING_PROFILE_ID: (
                 charging_profile.profile_id if charging_profile else None
             ),
-            CONF_SUBSCRIPTION_FEE: float(user_input.get(CONF_SUBSCRIPTION_FEE, 799)),
+            CONF_SUBSCRIPTION_FEE: float(
+                user_input.get(CONF_SUBSCRIPTION_FEE, DEFAULT_SUBSCRIPTION_FEE)
+            ),
+            CONF_READ_ONLY: bool(user_input.get(CONF_READ_ONLY, True)),
         }
 
 
 class CleverOptionsFlow(config_entries.OptionsFlow):
-    """Allow the subscription fee to be changed without reauthentication."""
+    """Change the subscription fee and control access without reauthentication."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self._config_entry = config_entry
@@ -185,8 +195,15 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         if user_input is not None:
             data = dict(self._config_entry.data)
+            was_read_only = bool(data.get(CONF_READ_ONLY, False))
             data[CONF_SUBSCRIPTION_FEE] = float(user_input[CONF_SUBSCRIPTION_FEE])
+            data[CONF_READ_ONLY] = bool(user_input[CONF_READ_ONLY])
             self.hass.config_entries.async_update_entry(self._config_entry, data=data)
+            if data[CONF_READ_ONLY] != was_read_only:
+                # Switches and control actions are added or removed on reload.
+                self.hass.config_entries.async_schedule_reload(
+                    self._config_entry.entry_id
+                )
             return self.async_create_entry(title="", data={})
         return self.async_show_form(
             step_id="init",
@@ -194,8 +211,14 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         CONF_SUBSCRIPTION_FEE,
-                        default=self._config_entry.data.get(CONF_SUBSCRIPTION_FEE, 799),
-                    ): vol.Coerce(float)
+                        default=self._config_entry.data.get(
+                            CONF_SUBSCRIPTION_FEE, DEFAULT_SUBSCRIPTION_FEE
+                        ),
+                    ): vol.Coerce(float),
+                    vol.Required(
+                        CONF_READ_ONLY,
+                        default=self._config_entry.data.get(CONF_READ_ONLY, False),
+                    ): bool,
                 }
             ),
         )

@@ -17,6 +17,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .clever.models import CleverApiData
 from .const import DOMAIN
@@ -56,16 +57,41 @@ SENSORS = (
         name="Estimated total price this month",
         device_class=SensorDeviceClass.MONETARY,
         native_unit_of_measurement="DKK",
-        value_fn=lambda data: round(
-            data.consumption.kwh_this_month * data.surcharge.price_dkk_per_kwh
-            + data.subscription_fee,
-            2,
-        ),
+        value_fn=lambda data: data.estimated_total_price,
+        attributes_fn=lambda data: {"energy_surcharge": data.energy_surcharge_cost},
+    ),
+    CleverSensorDescription(
+        key="subscription_fee",
+        translation_key="subscription_fee",
+        name="Monthly subscription fee",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda data: data.subscription_fee,
+    ),
+    CleverSensorDescription(
+        key="energy_surcharge_cost",
+        translation_key="energy_surcharge_cost",
+        name="Energy surcharge this month",
+        device_class=SensorDeviceClass.MONETARY,
+        native_unit_of_measurement="DKK",
+        value_fn=lambda data: data.energy_surcharge_cost,
         attributes_fn=lambda data: {
-            "energy_surcharge": round(
-                data.consumption.kwh_this_month * data.surcharge.price_dkk_per_kwh,
-                2,
-            )
+            "rate_dkk_per_kwh": data.surcharge.price_dkk_per_kwh,
+            "energy_kwh": data.consumption.kwh_this_month,
+        },
+    ),
+    CleverSensorDescription(
+        key="effective_price_per_kwh",
+        translation_key="effective_price_per_kwh",
+        name="Effective price per kWh this month",
+        icon="mdi:scale-balance",
+        native_unit_of_measurement="DKK/kWh",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda data: data.effective_price_per_kwh_at(dt_util.now()),
+        attributes_fn=lambda data: {
+            "subscription_fee": data.subscription_fee,
+            "energy_surcharge": data.energy_surcharge_cost,
+            "energy_kwh": data.consumption.kwh_this_month,
         },
     ),
     CleverSensorDescription(

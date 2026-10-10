@@ -41,11 +41,15 @@
         "title": "Clever options",
         "data": {
           "subscription_fee": "Monthly subscription fee",
-          "read_only": "Read-only (no switches or control actions)"
+          "read_only": "Read-only (no switches or control actions)",
+          "show_panel": "Show the charging overview in the sidebar",
+          "price_area": "Electricity price area"
         },
         "data_description": {
           "subscription_fee": "DKK per month. Clever One costs 849 with a home charger and 999 without (from 1 September 2026).",
-          "read_only": "Turning this off adds the preheat and boost switches and the intelligent-charging actions."
+          "read_only": "Turning this off adds the preheat and boost switches and the intelligent-charging actions.",
+          "show_panel": "A page comparing what Clever has cost with what a charger of your own would have cost.",
+          "price_area": "DK1 is west of the Great Belt, DK2 east of it. Used for hourly prices from Energi Data Service."
         }
       }
     }

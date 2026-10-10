@@ -23,6 +23,9 @@ CONF_DEPT_TIME = "depature_time"
 CONF_DESIRED_RANGE = "desired_range"
 CONF_PHASE_COUNT = "phase_count"
 CONF_READ_ONLY = "read_only"
+CONF_PRICE_AREA = "price_area"
+CONF_SHOW_PANEL = "show_panel"
+PRICE_AREAS: Final = ["DK1", "DK2"]
 
 # Clever One with a home charger, per month, from 1 September 2026.
 # Without a home charger the fee is 999 DKK.

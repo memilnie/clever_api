@@ -19,11 +19,19 @@ from .const import (
     CONF_PHASE_COUNT,
     CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
+    CONF_SHOW_PANEL,
     DOMAIN,
     SERVICE_DISABLE_FLEX,
     SERVICE_ENABLE_FLEX,
 )
-from .coordinator import CleverApiUpdateCoordinator, history_store
+from .coordinator import (
+    CleverApiUpdateCoordinator,
+    history_store,
+    price_store,
+    settings_store,
+)
+from .panel import async_register_panel, async_unregister_panel
+from .websocket import async_register_commands
 
 READ_PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONTROL_PLATFORMS = [Platform.SWITCH]
@@ -136,6 +144,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, coordinator.platforms)
 
+    async_register_commands(hass)
+    if entry.data.get(CONF_SHOW_PANEL, True):
+        await async_register_panel(hass)
+
     if not coordinator.read_only and not hass.services.has_service(
         DOMAIN, SERVICE_ENABLE_FLEX
     ):
@@ -181,8 +193,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Delete the stored charging history when the account is removed."""
+    """Delete the stored charging history, prices and assumptions with the account."""
     await history_store(hass, entry.entry_id).async_remove()
+    await price_store(hass, entry.entry_id).async_remove()
+    await settings_store(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -197,6 +211,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if all(other.read_only for other in hass.data[DOMAIN].values()):
             hass.services.async_remove(DOMAIN, SERVICE_ENABLE_FLEX)
             hass.services.async_remove(DOMAIN, SERVICE_DISABLE_FLEX)
+        if not any(
+            hass.config_entries.async_get_entry(entry_id).data.get(
+                CONF_SHOW_PANEL, True
+            )
+            for entry_id in hass.data[DOMAIN]
+        ):
+            async_unregister_panel(hass)
         if not hass.data[DOMAIN]:
             del hass.data[DOMAIN]
     return unload_ok

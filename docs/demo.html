@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clever charging panel – demo</title>
+<style>html, body { margin: 0; height: 100%; }</style>
+</head>
+<body>
+<!--
+  The charging panel with made-up data, for trying it without Home Assistant and for the
+  screenshots in the README. Serve the repository root over HTTP and open /docs/demo.html, e.g.
+      python3 -m http.server 8000
+-->
+<clever-charging-panel></clever-charging-panel>
+<script type="module">
+import '../custom_components/clever_api/frontend/clever-charging-panel.js';
+
+// A small seeded generator, so the demo shows the same figures every time.
+let seed = 20261010;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+const utc = (y, m, d, h = 0, min = 0) => Date.UTC(y, m - 1, d, h, min) / 1000;
+
+const now = utc(2026, 10, 10, 16), start = utc(2026, 6, 1);
+// Hourly spot prices without VAT: cheap at night and around noon, dear in the early evening.
+const level = {6: 0.80, 7: 0.76, 8: 0.94, 9: 1.05, 10: 1.13};
+const prices = [];
+for (let t = start; t < now + 86400; t += 3600) {
+  const d = new Date(t * 1000), hour = (d.getUTCHours() + 2) % 24;
+  const shape = hour < 6 ? 0.55 : hour < 10 ? 1.1 : hour < 15 ? 0.7 : hour < 21 ? 1.75 : 0.9;
+  prices.push(Math.round(level[d.getUTCMonth() + 1] * shape * (0.85 + rnd() * 0.3) * 1000) / 1000);
+}
+const sessions = [];
+for (let t = utc(2026, 6, 2); t < now - 86400; t += 86400) {
+  const roll = rnd();
+  if (roll < 0.42) {            // home: plugged in after work, unplugged the next morning
+    const begin = t + (15 + rnd() * 4) * 3600;
+    sessions.push({start: Math.round(begin), stop: Math.round(begin + (11 + rnd() * 4) * 3600), kwh: Math.round((14 + rnd() * 34) * 100) / 100, home: true});
+  } else if (roll < 0.52) {     // fast charging on a trip
+    const begin = t + (8 + rnd() * 9) * 3600;
+    sessions.push({start: Math.round(begin), stop: Math.round(begin + (18 + rnd() * 20) * 60), kwh: Math.round((22 + rnd() * 30) * 100) / 100, home: false});
+  } else if (roll < 0.56) {     // an ordinary public charger
+    const begin = t + (7 + rnd() * 4) * 3600;
+    sessions.push({start: Math.round(begin), stop: Math.round(begin + (2 + rnd() * 5) * 3600), kwh: Math.round((8 + rnd() * 20) * 100) / 100, home: false});
+  }
+}
+let saved = {};
+document.querySelector('clever-charging-panel').provider = {
+  load: async () => ({sessions, surcharges: {'2026-10': 0.52}, spot: {start, prices, area: 'DK1'}, settings: saved, now}),
+  save: async settings => { saved = settings; },
+};
+</script>
+</body>
+</html>

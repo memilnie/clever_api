@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0 (2026-10-10)
+---
+ - Add a sidebar page, "Opladning", with what has been charged and a comparison of Clever with a charger of your own. The assumptions can be changed on the page, and the calculations are written out with your own numbers.
+ - Fetch hourly day-ahead prices from Energi Data Service for the comparison. The price area follows Home Assistant's location and can be set in the options.
+ - Add options to hide the page and to choose the price area.
+
 ## 0.6.0 (2026-10-10)
 ---
  - Keep completed charging sessions and each month's energy surcharge rate in Home Assistant's storage, so earlier sessions and rates remain available for statistics. The history is deleted when the account is removed.

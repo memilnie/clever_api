@@ -5,7 +5,8 @@ chargers. This project is not affiliated with or supported by Clever A/S.
 
 This is a fork of [mindThomas/clever_api](https://github.com/mindThomas/clever_api)
 that adds price figures for comparing Clever with other electricity prices, a
-read-only mode, slower polling when no car is connected, and Danish translations.
+read-only mode, slower polling when no car is connected, Danish translations,
+and a sidebar page that compares Clever with owning the charger yourself.
 
 The integration follows the API used by the current Clever Android app:
 
@@ -88,6 +89,103 @@ Clever refunds it at a monthly rate. That refund and your own electricity bill
 are not part of these figures. The effective price is therefore what Clever
 costs on top, on the assumption that the refund covers what the electricity
 cost you.
+
+## Charging overview: Clever compared with a charger of your own
+
+The integration adds a page called **Opladning** to the Home Assistant sidebar.
+It lists what you have charged and compares what Clever has cost with what the
+same energy would have cost if you owned the charger yourself. The page is in
+Danish.
+
+![The charging overview with monthly cost, monthly energy and the assumptions](docs/images/overview.png)
+
+The page shows:
+
+- energy charged, the share charged at home, and the split between fast
+  charging and ordinary public chargers away from home
+- cost per month for Clever and for a charger of your own
+- a month-by-month table where the subscription fee, the energy surcharge rate
+  and the refund rate can be corrected to match your invoices
+- a projection for a year at an expected mileage, with the mileage at which the
+  two solutions cost the same
+- every charging session with what it would have cost on your own meter
+
+Everything is calculated in the browser from your sessions and hourly
+electricity prices, so changing an assumption updates the figures at once. The
+assumptions are saved in Home Assistant.
+
+The screenshots use made-up data. To try the page without Home Assistant, serve
+the repository over HTTP (`python3 -m http.server`) and open `docs/demo.html`.
+
+### Assumptions
+
+| Assumption | Default | Where it comes from |
+|---|---|---|
+| Hourly electricity price | Day-ahead price for your price area | Energi Data Service, `DayAheadPrices`, without VAT |
+| Tariffs and duties on your own meter | 0.23 DKK/kWh | Net tariff, system tariff and electricity duty as stated by Clever for September 2026 |
+| VAT | 25 % | |
+| Charging power | 11 kW | |
+| Subscription fee | 849 DKK from September 2026, 799 before, 899 in months before your first home charge | Clever One list prices |
+| Energy surcharge | Rate from the Clever app for the current month, Clever's published rate where known, otherwise estimated | Estimate: month's average spot price × 1.25, minus 0.89 DKK/kWh |
+| Refund of home electricity | Clever's published rate where known | Without a rate, the refund is taken to cover exactly what the electricity cost |
+| Fast charging away from home | 3.99 DKK/kWh | Circle K, October 2026 |
+| Ordinary public charger | 3.49 DKK/kWh | Clever without a subscription, October 2026 |
+| Own charger incl. installation | 9,000 DKK over 10 years | Straight-line depreciation, no residual value |
+
+Three things the calculation cannot know:
+
+- Clever reports when the car was connected, not the hours in which it actually
+  charged. Home charging is therefore priced either from the moment of
+  connection or in the cheapest hours while connected; both are shown per
+  session, and a setting chooses which one the comparison uses.
+- A session away from home is counted as fast charging when it averaged at least
+  25 kW.
+- The comparison assumes you would have charged in the same places with a
+  charger of your own. In the projection, the share charged at home can be
+  changed.
+
+### How it is calculated
+
+For each month:
+
+    Clever       = subscription fee
+                 + surcharge rate × all kWh
+                 + (home electricity at hourly prices − refund rate × home kWh)   if the refund rate is known
+
+    Own charger  = home kWh at hourly prices
+                 + fast kWh away × fast price + other kWh away × public price
+                 + charger price ÷ (years × 12) + running cost
+
+The price of a kWh at home in a given hour is `(spot price + tariffs and duties) × (1 + VAT)`.
+
+For a year ahead, with the averages of the period shown:
+
+    kWh per year = km × kWh per 100 km ÷ 100
+    Clever       = 12 × fee + average surcharge × kWh per year
+    Own charger  = home share × kWh × average home price
+                 + (1 − home share) × kWh × average price away
+                 + charger price ÷ years + 12 × running cost
+
+The break-even mileage is where the two are equal.
+
+The page writes these calculations out with your own numbers under
+**Antagelser og regneeksempler**: one month, one home charging session hour by
+hour, and the year ahead.
+
+![Assumptions and worked examples for a month, a session and a year](docs/images/worked-examples.png)
+
+### Settings
+
+Under the integration's options:
+
+- **Show the charging overview in the sidebar** turns the page on or off.
+- **Electricity price area** is DK1 (west of the Great Belt) or DK2. It is
+  chosen from Home Assistant's location until you set it.
+
+Hourly prices are fetched from `api.energidataservice.dk` every few hours and
+kept in `.storage/clever_api.prices.<entry id>`. The assumptions you enter are
+kept in `.storage/clever_api.charging_settings.<entry id>`. Both are deleted
+when the account is removed.
 
 ## Charging history
 

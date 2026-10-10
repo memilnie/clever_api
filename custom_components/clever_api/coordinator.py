@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import timedelta
 from typing import Any
 
+from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -33,8 +35,16 @@ from .clever.models import (
     summarize_consumption,
 )
 from .clever.polling import ACTIVE_INTERVAL, next_interval
+from .clever.prices import (
+    fetch_day_ahead,
+    fetch_start,
+    hourly_prices,
+    price_area_for,
+    price_series,
+)
 from .const import (
     CONF_FIREBASE_UID,
+    CONF_PRICE_AREA,
     CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_FEE,
@@ -44,11 +54,22 @@ from .const import (
 
 SLOW_REFRESH_SECONDS = 60 * 60
 HISTORY_STORAGE_VERSION = 1
+PRICE_REFRESH_SECONDS = 3 * 60 * 60
 
 
 def history_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     """Return the store holding an account's charging sessions and surcharge rates."""
     return Store(hass, HISTORY_STORAGE_VERSION, f"{DOMAIN}.history.{entry_id}")
+
+
+def price_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the store holding hourly electricity prices for the charging overview."""
+    return Store(hass, 1, f"{DOMAIN}.prices.{entry_id}")
+
+
+def settings_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the store holding the assumptions entered in the charging panel."""
+    return Store(hass, 1, f"{DOMAIN}.charging_settings.{entry_id}")
 
 
 class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
@@ -67,6 +88,9 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         self._failures = 0
         self._history_store = history_store(hass, entry.entry_id)
         self._history: dict[str, Any] | None = None
+        self._price_store = price_store(hass, entry.entry_id)
+        self._prices: dict[str, Any] | None = None
+        self._settings_store = settings_store(hass, entry.entry_id)
         # Read-only entries get no switches and are skipped by the control actions.
         self.read_only = bool(entry.data.get(CONF_READ_ONLY, False))
         self.platforms: list[Any] = []
@@ -105,6 +129,82 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         if changed:
             await self._history_store.async_save(self._history)
 
+    @property
+    def price_area(self) -> str:
+        """The configured price area, or the one Home Assistant's location lies in."""
+        return self.config_entry.data.get(CONF_PRICE_AREA) or price_area_for(
+            self.hass.config.longitude
+        )
+
+    async def _async_refresh_prices(self) -> None:
+        """Fetch hourly prices from the first session's month until now.
+
+        Only the tail is requested, at most every few hours. A failure never
+        fails the Clever update; the overview then lacks the newest prices.
+        """
+        sessions = (self._history or {}).get("sessions") or []
+        if not sessions:
+            return
+        if self._prices is None:
+            self._prices = await self._price_store.async_load() or {}
+        first_day = sessions[0]["start"][:7] + "-01"
+        area = self.price_area
+        if (
+            self._prices.get("area") != area
+            or self._prices.get("first_day", "9999") > first_day
+        ):
+            self._prices = {"area": area, "first_day": first_day, "hours": {}}
+        if time.time() - self._prices.get("fetched", 0) < PRICE_REFRESH_SECONDS:
+            return
+        end_day = (dt_util.utcnow() + timedelta(days=2)).strftime("%Y-%m-%d")
+        try:
+            records = await fetch_day_ahead(
+                async_get_clientsession(self.hass),
+                area,
+                fetch_start(self._prices["hours"], first_day),
+                end_day,
+            )
+        except (ClientError, TimeoutError, ValueError) as error:
+            LOGGER.debug("Could not fetch electricity prices: %s", error)
+            return
+        self._prices["hours"].update(hourly_prices(records))
+        self._prices["fetched"] = time.time()
+        await self._price_store.async_save(self._prices)
+
+    async def async_charging_overview(self) -> dict[str, Any]:
+        """Return what the charging panel needs. Charge point IDs are left out."""
+        if self._history is None:
+            self._history = await self._history_store.async_load() or {}
+        if self._prices is None:
+            self._prices = await self._price_store.async_load() or {}
+        sessions = []
+        for item in self._history.get("sessions") or []:
+            start = dt_util.parse_datetime(str(item.get("start")))
+            stop = dt_util.parse_datetime(str(item.get("stop"))) or start
+            if start is None:
+                continue
+            sessions.append(
+                {
+                    "start": int(start.timestamp()),
+                    "stop": int(stop.timestamp()),
+                    "kwh": float(item.get("kwh") or 0),
+                    "home": bool(item.get("home")),
+                }
+            )
+        return {
+            "sessions": sessions,
+            "surcharges": self._history.get("surcharges") or {},
+            "spot": {
+                **price_series(self._prices.get("hours") or {}),
+                "area": self._prices.get("area") or self.price_area,
+            },
+            "settings": await self._settings_store.async_load() or {},
+            "now": time.time(),
+        }
+
+    async def async_save_charging_settings(self, settings: dict[str, Any]) -> None:
+        await self._settings_store.async_save(settings)
+
     async def async_refresh_configuration(self) -> None:
         """Refresh REST configuration after a control request."""
         self._slow_refresh_at = 0.0
@@ -141,6 +241,7 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
                 }
                 self._slow_refresh_at = time.monotonic() + SLOW_REFRESH_SECONDS
                 await self._async_save_history()
+                await self._async_refresh_prices()
 
             chargepoint_data, transaction_data = await asyncio.gather(
                 self.client.get_home_chargepoints(),

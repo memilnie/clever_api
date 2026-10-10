@@ -16,19 +16,23 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .clever.clever import CleverClient
 from .clever.exceptions import CleverAuthenticationError, CleverError
 from .clever.models import ChargingProfile, Installation, Profile
+from .clever.prices import price_area_for
 from .const import (
     CONF_BOX,
     CONF_BOX_ID,
     CONF_CHARGING_PROFILE_ID,
     CONF_CONNECTOR_ID,
     CONF_FIREBASE_UID,
+    CONF_PRICE_AREA,
     CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
+    CONF_SHOW_PANEL,
     CONF_SUBSCRIPTION_FEE,
     CONF_USER_ID,
     DEFAULT_SUBSCRIPTION_FEE,
     DOMAIN,
     LOGGER,
+    PRICE_AREAS,
 )
 
 PASSWORD_SELECTOR = selector.TextSelector(
@@ -195,12 +199,17 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         if user_input is not None:
             data = dict(self._config_entry.data)
-            was_read_only = bool(data.get(CONF_READ_ONLY, False))
+            before = (
+                bool(data.get(CONF_READ_ONLY, False)),
+                bool(data.get(CONF_SHOW_PANEL, True)),
+            )
             data[CONF_SUBSCRIPTION_FEE] = float(user_input[CONF_SUBSCRIPTION_FEE])
             data[CONF_READ_ONLY] = bool(user_input[CONF_READ_ONLY])
+            data[CONF_SHOW_PANEL] = bool(user_input[CONF_SHOW_PANEL])
+            data[CONF_PRICE_AREA] = user_input[CONF_PRICE_AREA]
             self.hass.config_entries.async_update_entry(self._config_entry, data=data)
-            if data[CONF_READ_ONLY] != was_read_only:
-                # Switches and control actions are added or removed on reload.
+            if (data[CONF_READ_ONLY], data[CONF_SHOW_PANEL]) != before:
+                # Switches, control actions and the sidebar panel are added or removed on reload.
                 self.hass.config_entries.async_schedule_reload(
                     self._config_entry.entry_id
                 )
@@ -219,6 +228,15 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
                         CONF_READ_ONLY,
                         default=self._config_entry.data.get(CONF_READ_ONLY, False),
                     ): bool,
+                    vol.Required(
+                        CONF_SHOW_PANEL,
+                        default=self._config_entry.data.get(CONF_SHOW_PANEL, True),
+                    ): bool,
+                    vol.Required(
+                        CONF_PRICE_AREA,
+                        default=self._config_entry.data.get(CONF_PRICE_AREA)
+                        or price_area_for(self.hass.config.longitude),
+                    ): vol.In(PRICE_AREAS),
                 }
             ),
         )

@@ -23,7 +23,7 @@ from .const import (
     SERVICE_DISABLE_FLEX,
     SERVICE_ENABLE_FLEX,
 )
-from .coordinator import CleverApiUpdateCoordinator
+from .coordinator import CleverApiUpdateCoordinator, history_store
 
 READ_PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 CONTROL_PLATFORMS = [Platform.SWITCH]
@@ -178,6 +178,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     return True
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the stored charging history when the account is removed."""
+    await history_store(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

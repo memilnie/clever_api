@@ -7,6 +7,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+def month_fraction(now: datetime) -> float:
+    """Return how much of ``now``'s calendar month has passed, from 0 to 1."""
+    start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    following = (
+        start.replace(year=start.year + 1, month=1)
+        if start.month == 12
+        else start.replace(month=start.month + 1)
+    )
+    return (now - start) / (following - start)
+
+
 def parse_datetime(value: Any) -> datetime | None:
     """Parse an API timestamp into an aware UTC datetime."""
     if value is None:
@@ -18,7 +29,7 @@ def parse_datetime(value: Any) -> datetime | None:
         return datetime.fromtimestamp(value / 1_000_000, tz=UTC)
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+            return datetime.fromisoformat(value).astimezone(UTC)
         except ValueError:
             return None
     return None
@@ -370,6 +381,33 @@ class CleverApiData:
     chargepoint_states: tuple[ChargePointState, ...]
     transactions: tuple[ActiveTransaction, ...]
     subscription_fee: float
+
+    @property
+    def energy_surcharge_cost(self) -> float:
+        """Energy surcharge on this month's consumption so far, in DKK."""
+        return round(
+            self.consumption.kwh_this_month * self.surcharge.price_dkk_per_kwh, 2
+        )
+
+    @property
+    def estimated_total_price(self) -> float:
+        """Full subscription fee plus the surcharge so far, in DKK."""
+        return round(self.subscription_fee + self.energy_surcharge_cost, 2)
+
+    def effective_price_per_kwh_at(self, now: datetime) -> float | None:
+        """Return what Clever has cost per charged kWh so far this month, in DKK.
+
+        The subscription fee is counted in proportion to how much of the month
+        has passed, so the figure is comparable with other electricity prices
+        from the first charge of the month rather than only on the last day.
+        The energy surcharge is added in full. Returns ``None`` until something
+        has been charged.
+        """
+        kwh = self.consumption.kwh_this_month
+        if kwh <= 0:
+            return None
+        fee_to_date = self.subscription_fee * month_fraction(now)
+        return round((fee_to_date + self.energy_surcharge_cost) / kwh, 3)
 
     @property
     def home_installation(self) -> Installation | None:

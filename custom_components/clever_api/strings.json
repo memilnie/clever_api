@@ -7,7 +7,12 @@
         "data": {
           "email": "Email",
           "password": "Password",
-          "subscription_fee": "Monthly subscription fee"
+          "subscription_fee": "Monthly subscription fee",
+          "read_only": "Read-only (no switches or control actions)"
+        },
+        "data_description": {
+          "subscription_fee": "DKK per month. Clever One costs 849 with a home charger and 999 without (from 1 September 2026).",
+          "read_only": "Home Assistant only reads data and cannot change charging. This can be changed later in the options."
         }
       },
       "reauth_confirm": {
@@ -35,34 +40,112 @@
       "init": {
         "title": "Clever options",
         "data": {
-          "subscription_fee": "Monthly subscription fee"
+          "subscription_fee": "Monthly subscription fee",
+          "read_only": "Read-only (no switches or control actions)"
+        },
+        "data_description": {
+          "subscription_fee": "DKK per month. Clever One costs 849 with a home charger and 999 without (from 1 September 2026).",
+          "read_only": "Turning this off adds the preheat and boost switches and the intelligent-charging actions."
         }
       }
     }
   },
   "entity": {
     "sensor": {
-      "energy_this_month": {"name": "Energy this month"},
-      "energy_surcharge": {"name": "Energy surcharge"},
-      "estimated_price": {"name": "Estimated total price this month"},
-      "energy_this_month_home": {"name": "Energy this month on home charger"},
-      "current_session_energy": {"name": "Energy this charging session"},
-      "session_target_energy": {"name": "Target energy this charging session"},
-      "session_progress": {"name": "Charging session progress"},
-      "session_duration": {"name": "Charging session duration"},
-      "session_average_power": {"name": "Average power this charging session"},
-      "session_expected_completion": {"name": "Expected charging completion"},
-      "vehicle_battery_level": {"name": "Vehicle battery level"},
-      "charger_state": {"name": "State of charger"}
+      "energy_this_month": {
+        "name": "Energy this month"
+      },
+      "energy_surcharge": {
+        "name": "Energy surcharge"
+      },
+      "estimated_price": {
+        "name": "Estimated total price this month"
+      },
+      "energy_this_month_home": {
+        "name": "Energy this month on home charger"
+      },
+      "current_session_energy": {
+        "name": "Energy this charging session"
+      },
+      "session_target_energy": {
+        "name": "Target energy this charging session"
+      },
+      "session_progress": {
+        "name": "Charging session progress"
+      },
+      "session_duration": {
+        "name": "Charging session duration"
+      },
+      "session_average_power": {
+        "name": "Average power this charging session"
+      },
+      "session_expected_completion": {
+        "name": "Expected charging completion"
+      },
+      "vehicle_battery_level": {
+        "name": "Vehicle battery level"
+      },
+      "charger_state": {
+        "name": "State of charger"
+      },
+      "subscription_fee": {
+        "name": "Monthly subscription fee"
+      },
+      "energy_surcharge_cost": {
+        "name": "Energy surcharge this month"
+      },
+      "effective_price_per_kwh": {
+        "name": "Effective price per kWh this month"
+      }
     },
     "binary_sensor": {
-      "intelligent_charging": {"name": "Intelligent charging"},
-      "charging": {"name": "Charging"},
-      "vehicle_connected": {"name": "Vehicle connected"}
+      "intelligent_charging": {
+        "name": "Intelligent charging"
+      },
+      "charging": {
+        "name": "Charging"
+      },
+      "vehicle_connected": {
+        "name": "Vehicle connected"
+      }
     },
     "switch": {
-      "preheat": {"name": "Preheat"},
-      "boost": {"name": "Skip intelligent charging"}
+      "preheat": {
+        "name": "Preheat"
+      },
+      "boost": {
+        "name": "Skip intelligent charging"
+      }
+    }
+  },
+  "services": {
+    "enable_flex": {
+      "name": "Enable intelligent charging",
+      "description": "Sets the departure time and required energy, then enables intelligent charging on the home charger.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Clever account",
+          "description": "Account to control. Optional when only one home charger is configured."
+        },
+        "departure_time": {
+          "name": "Departure time",
+          "description": "When the car must be ready, as hh:mm."
+        },
+        "required_energy": {
+          "name": "Required energy",
+          "description": "Energy to charge before departure, in kWh."
+        }
+      }
+    },
+    "disable_flex": {
+      "name": "Disable intelligent charging",
+      "description": "Disables intelligent charging on the home charger.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Clever account",
+          "description": "Account to control. Optional when only one home charger is configured."
+        }
+      }
     }
   }
 }

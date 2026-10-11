@@ -3,7 +3,7 @@
  * same energy would have cost with a charger of your own.
  *
  * Used as a Home Assistant sidebar panel (the `hass` property is set by Home Assistant)
- * and usable on any page by setting `provider = {load(), save(settings)}` instead.
+ * and usable on any page by setting `provider = {load(), save(settings), readOnly}` instead.
  * All figures are calculated here in the browser from the data described in README.md.
  */
 
@@ -20,6 +20,18 @@ const FEE_FROM_2026_09 = 849, FEE_BEFORE = 799, FEE_WITHOUT_CHARGER = 899;
 const SURCHARGE_THRESHOLD = 0.89;
 // Away from home, a session averaging at least this power counts as fast charging.
 const FAST_KW = 25;
+// The assumptions live on the server, so every device shows the same. The browser only holds
+// a copy of values the server could not save, and sends them again the next time the page opens.
+const STORAGE_KEY = 'clever_api.charging_unsaved';
+
+function readUnsaved() {
+  try { const value = JSON.parse(localStorage.getItem(STORAGE_KEY)); return value && typeof value === 'object' ? value : null; }
+  catch { return null; }   // private windows and blocked storage
+}
+function writeUnsaved(settings) {
+  try { if (settings) localStorage.setItem(STORAGE_KEY, JSON.stringify(settings)); else localStorage.removeItem(STORAGE_KEY); return true; }
+  catch { return false; }
+}
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const kr0 = v => v == null || isNaN(v) ? '–' : Math.round(v).toLocaleString('da-DK');
@@ -250,7 +262,10 @@ class CleverChargingPanel extends HTMLElement {
     this.attachShadow({mode: 'open'});
     this._all = false;
     this.shadowRoot.addEventListener('change', ev => this._changed(ev));
-    this.shadowRoot.addEventListener('click', ev => { if (ev.target.closest('#all')) { this._all = true; this._draw(); } });
+    this.shadowRoot.addEventListener('click', ev => {
+      if (ev.target.closest('#all')) { this._all = true; this._draw(); }
+      if (ev.target.closest('#reset')) this._reset();
+    });
   }
 
   set hass(hass) {
@@ -276,14 +291,41 @@ class CleverChargingPanel extends HTMLElement {
       this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="wrap"><div class="note">Opladningerne kunne ikke hentes: ${esc(error?.message || error)}</div></div>`;
       return;
     }
-    const saved = this._data.settings || {};
+    this._readOnly = !!provider.readOnly;
+    // Values the server could not save last time are used and sent again; otherwise the server's copy.
+    const unsaved = this._readOnly ? null : readUnsaved(), saved = unsaved || this._data.settings || {};
     this._set = {...DEFAULTS, ...saved, months: {...(saved.months || {})}};
+    this._status = '';
+    this._draw();
+    if (unsaved) this._persist();
+  }
+
+  _persist() {
+    clearTimeout(this._timer);
+    this._timer = setTimeout(async () => {
+      try {
+        await this._save(this._set);
+        writeUnsaved(null);
+        this._status = 'Gemt. Værdierne er de samme på alle dine enheder.';
+      } catch {
+        this._status = writeUnsaved(this._set)
+          ? 'Kunne ikke gemmes på serveren. Værdierne er kun gemt i denne browser og sendes igen, næste gang siden åbnes.'
+          : 'Kunne ikke gemmes.';
+      }
+      const el = this.shadowRoot.getElementById('status');
+      if (el) el.textContent = this._status;
+    }, 500);
+  }
+
+  _reset() {
+    this._set = {...DEFAULTS, months: {}};
+    this._persist();
     this._draw();
   }
 
   _changed(ev) {
     const t = ev.target, set = this._set;
-    if (!set || !(t.dataset.cs || t.dataset.cm)) return;
+    if (!set || this._readOnly || !(t.dataset.cs || t.dataset.cm)) return;
     const num = t.value.trim() === '' ? null : parseFloat(t.value.replace(',', '.'));
     if (t.dataset.cs) {
       const key = t.dataset.cs;
@@ -295,8 +337,7 @@ class CleverChargingPanel extends HTMLElement {
       if (num == null || isNaN(num)) delete own[field]; else own[field] = Math.max(0, num);
       if (!Object.keys(own).length) delete set.months[month];
     }
-    clearTimeout(this._timer);
-    this._timer = setTimeout(() => Promise.resolve(this._save(set)).catch(() => {}), 500);
+    this._persist();
     this._draw();
   }
 
@@ -347,6 +388,8 @@ class CleverChargingPanel extends HTMLElement {
           ${field('chargerPrice', 'Ladeboks og installation', 'kr.')}${field('lifetime', 'Afskrives over', 'år')}${field('extraMonthly', 'Løbende udgift', 'kr./md.')}
           <div class="small muted" style="margin:8px 0 4px">Udeladning uden abonnement</div>
           ${field('publicFast', 'Hurtig- og lynladning', 'kr./kWh')}${field('publicAc', 'Almindelig ladestander', 'kr./kWh')}
+          <p class="small muted" id="status" aria-live="polite">${esc(this._readOnly ? 'Forudsætningerne hentes fra Home Assistant og ændres på siden Opladning dér.' : this._status || 'Dine værdier gemmes på serveren og er de samme på alle dine enheder.')}</p>
+          ${this._readOnly ? '' : '<button id="reset">Nulstil til standardværdier</button>'}
           <p class="small muted">Standardværdierne er fra oktober 2026: Circle K's lynpris, Clevers pris uden abonnement på almindelige ladere, og de tariffer og afgifter Clever selv oplyste for september.</p></div>
         <div class="card section"><h2>Et år frem</h2>
           ${field('km', 'Forventet kørsel', 'km/år', '1000')}${field('kwh100', 'Forbrug', 'kWh/100 km')}
@@ -358,6 +401,7 @@ class CleverChargingPanel extends HTMLElement {
             <dt>Skæringspunkt</dt><dd>${y.even != null && y.even > 0 ? `ca. ${kr0(y.even)} km om året. Over det er Clever billigst.` : 'Ingen: den ene løsning er billigst uanset kørsel.'}</dd></dl>
           <p class="small muted">Udregningen står under "Antagelser og regneeksempler".</p></div>
       </div></div></div>`;
+    if (this._readOnly) this.shadowRoot.querySelectorAll('input').forEach(input => { input.disabled = true; });
     // Inside Home Assistant the sidebar is opened from this button on narrow screens.
     if (this._hass && customElements.get('ha-menu-button')) {
       const menu = document.createElement('ha-menu-button');

@@ -112,7 +112,8 @@ The page shows:
 
 Everything is calculated in the browser from your sessions and hourly
 electricity prices, so changing an assumption updates the figures at once. The
-assumptions are saved in Home Assistant.
+assumptions are saved in the browser and in Home Assistant, and can be reset
+to the defaults on the page.
 
 The screenshots use made-up data. To try the page without Home Assistant, serve
 the repository over HTTP (`python3 -m http.server`) and open `docs/demo.html`.

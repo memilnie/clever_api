@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1 (2026-10-11)
+---
+ - Keep the assumptions entered on the charging page in the browser as well as in Home Assistant, show whether they were saved, and add a button to reset them.
+
 ## 0.7.0 (2026-10-10)
 ---
  - Add a sidebar page, "Opladning", with what has been charged and a comparison of Clever with a charger of your own. The assumptions can be changed on the page, and the calculations are written out with your own numbers.

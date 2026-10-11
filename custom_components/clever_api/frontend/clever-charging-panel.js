@@ -12,6 +12,8 @@ const DEFAULTS = {
   extraMonthly: 0, km: 20000, kwh100: 17, homeShare: null, sinceHome: true, months: {},
   // When home charging takes place: within a fixed window, in the cheapest hours, or from plug-in.
   mode: 'window', windowFrom: 0, windowTo: 6, useMeasured: true,
+  // Share of the energy from the charger that ends up in the battery, and the battery's size when new.
+  efficiency: 90, nominalCapacity: null,
 };
 // Rates Clever has published. Other months are estimated, or filled in by the user.
 const KNOWN_SURCHARGE = {'2025-12': 0, '2026-01': 0.12, '2026-08': 0.29, '2026-09': 0.44};
@@ -176,7 +178,58 @@ export function buildModel(data, set) {
   for (const d of day) d.price = d.n ? d.sum / d.n : null;
   total.allHoursPrice = day.reduce((a, d) => a + d.sum, 0) / Math.max(1, day.reduce((a, d) => a + d.n, 0));
   total.homeSessions = rows.filter(r => r.plan && keys.has(monthKey(r.start))).length;
-  return {months: list, shown: counted, rows, total, year, day, firstHomeMonth, fallback};
+  return {months: list, shown: counted, rows, total, year, day, firstHomeMonth, fallback, vehicle: vehicleModel(data, set, rows)};
+}
+
+/* What the car's own readings say about the battery and the consumption. A reading holds the
+   battery level and odometer at a moment in a home session: connected, charging started or
+   stopped, disconnected, or `seen` when the session was already running at start-up. */
+export function vehicleModel(data, set, rows) {
+  const readings = Object.entries(data.vehicle || {}).map(([start, list]) => ({start: +start, list}));
+  const car = [];
+  for (const row of rows) {
+    const list = row.home ? readings.find(x => Math.abs(x.start - row.start) <= 120)?.list : null;
+    if (!list?.length) continue;
+    const levels = list.filter(r => r.soc != null), first = levels[0], top = levels.reduce((a, r) => !a || r.soc >= a.soc ? r : a, null);
+    // Only a reading from the start of the session says what the battery held before charging.
+    const fromStart = first && (first.event === 'connected' || first.event === 'charging_started');
+    const gain = fromStart && top.time > first.time ? top.soc - first.soc : null;
+    // Small top-ups are left out: one percentage point of rounding would dominate.
+    const usable = gain != null && gain >= 20 ? row.kwh * (set.efficiency / 100) / (gain / 100) : null;
+    car.push({start: row.start, kwh: row.kwh, socStart: fromStart ? first.soc : null, socEnd: top ? top.soc : null, gain, usable, odometer: list.find(r => r.odometer != null)?.odometer ?? null});
+  }
+  const withOdometer = car.filter(c => c.odometer != null);
+  withOdometer.forEach((c, i) => { if (i) c.km = c.odometer - withOdometer[i - 1].odometer; });
+  let consumption = null;
+  if (withOdometer.length >= 2) {
+    // Everything charged from the first reading up to the last one, at home and away, over the distance driven.
+    const a = withOdometer[0], b = withOdometer[withOdometer.length - 1], km = b.odometer - a.odometer;
+    const kwh = rows.filter(r => r.start >= a.start - 120 && r.start < b.start - 120).reduce((sum, r) => sum + r.kwh, 0);
+    if (km >= 50) consumption = {km, kwh, per100: kwh / km * 100, from: a.start, to: b.start};
+  }
+  const estimates = car.map(c => c.usable).filter(v => v != null).sort((x, y) => x - y);
+  return {car, consumption, estimates: estimates.length, median: estimates.length ? estimates[Math.floor(estimates.length / 2)] : null, now: data.vehicle_now || {}};
+}
+
+function vehicleHtml(model, set, field) {
+  const v = model.vehicle, now = v.now, has = now.soc != null || now.odometer != null || v.car.length;
+  if (!has) return '';
+  const share = v.median != null && set.nominalCapacity ? ` (${kr0(v.median / set.nominalCapacity * 100)} % af ${nice(set.nominalCapacity)} kWh)` : '';
+  const recent = [...v.car].reverse().slice(0, 12);
+  return `<div class="card section"><h2>Bil og batteri</h2>
+    <p class="small muted" style="margin-top:-6px">Bilen aflæses, når en hjemmeopladning starter og slutter. Sammen med de kWh, Clever har målt, viser det forbruget og giver et skøn over batteriets brugbare kapacitet.</p>
+    <dl><dt>Batteri nu</dt><dd>${now.soc != null ? kr0(now.soc) + ' %' : '–'}${now.range != null ? ` <span class="muted small">rækkevidde ${kr0(now.range)} km</span>` : ''}</dd>
+      <dt>Kilometertal</dt><dd>${now.odometer != null ? kr0(now.odometer) + ' km' : '–'}</dd>
+      <dt>Målt forbrug</dt><dd>${v.consumption ? `<b>${kr2(v.consumption.per100)} kWh/100 km</b> <span class="muted small">${kr0(v.consumption.kwh)} kWh ladet over ${kr0(v.consumption.km)} km, inkl. ladetab</span>` : '<span class="muted">kræver aflæsninger fra mindst to opladninger og 50 km imellem</span>'}</dd>
+      <dt>Brugbar kapacitet</dt><dd>${v.median != null ? `<b>ca. ${kr2(v.median)} kWh</b>${share} <span class="muted small">median af ${v.estimates} opladninger</span>` : '<span class="muted">kræver en opladning på mindst 20 procentpoint, aflæst fra start</span>'}</dd></dl>
+    <div style="margin-top:10px">${field('efficiency', 'Andel af strømmen der når batteriet', '%')}${field('nominalCapacity', 'Batteriets kapacitet som ny', 'kWh')}</div>
+    ${recent.length ? `<div class="scroll"><table style="margin-top:8px"><tr><th>Opladning</th><th class="num">Batteri</th><th class="num">kWh fra Clever</th><th class="num">Anslået kapacitet</th><th class="num">Km siden forrige</th></tr>
+      ${recent.map(c => `<tr><td>${esc(fmtFull.format(new Date(c.start * 1000)))}</td>
+        <td class="num">${c.socStart != null ? kr0(c.socStart) + ' %' : '?'} → ${c.socEnd != null ? kr0(c.socEnd) + ' %' : '?'}</td><td class="num">${kr2(c.kwh)}</td>
+        <td class="num">${c.usable != null ? kr2(c.usable) + ' kWh' : '–'}</td><td class="num">${c.km != null ? kr0(c.km) : '–'}</td></tr>`).join('')}</table></div>`
+      : '<p class="small muted">Der er endnu ingen aflæsninger knyttet til en opladning. De kommer, næste gang bilen sættes til laderen.</p>'}
+    <p class="small muted">Anslået kapacitet = kWh fra Clever × ${kr0(set.efficiency)} % ÷ stigningen i batteriniveau. Clever måler strømmen før ladetabet, og bilen oplyser kun hele procenter, så det enkelte tal er usikkert; det er udviklingen over tid, der siger noget. Kulde og forvarmning trækker tallet ned.</p>
+    ${v.consumption ? `<p class="small muted">Under "Et år frem" regnes der med ${nice(set.kwh100)} kWh/100 km. Det målte forbrug er ${kr2(v.consumption.per100)}.</p>` : ''}</div>`;
 }
 
 const STYLE = `
@@ -446,6 +499,7 @@ class CleverChargingPanel extends HTMLElement {
           <h3>Hvor dine kWh hjemme lander med det valgte mønster</h3>
           ${barChart(model.day, [{key: 'kwh', name: 'kWh ladet i timen', color: 'var(--c3)'}], {unit: 'kWh'})}
         </div>
+        ${vehicleHtml(model, set, field)}
         <div class="card section"><h2>Måned for måned</h2>
           <p class="small muted" style="margin-top:-6px">Abonnement, energitillæg og tilbagebetaling kan rettes, så de passer med dine fakturaer. Et tomt felt bruger standardværdien.</p>
           <div class="scroll"><table>

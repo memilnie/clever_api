@@ -185,6 +185,35 @@ hour, and the year ahead.
 
 ![Assumptions and worked examples for a month, a session and a year](docs/images/worked-examples.png)
 
+### The car and its battery
+
+Clever knows when the car is connected and charging; the car knows its battery
+level and odometer. When a home charging session is connected, starts or stops
+charging, or ends, the integration reads the car and keeps the values with the
+session. With the [Hyundai/Kia integration](https://github.com/Hyundai-Kia-Connect/kia_uvo)
+installed this needs no setup: its battery level and odometer sensors are found
+automatically, and the car is asked for fresh values (at most once every ten
+minutes, because that wakes the car). For other cars, choose the two sensors in
+the options.
+
+![The car and battery section with consumption and estimated capacity](docs/images/car-and-battery.png)
+
+From the readings the page shows:
+
+- **Measured consumption:** everything charged between the first and the last
+  odometer reading, at home and away, over the distance driven. It includes
+  charging losses, so it is what you pay for.
+- **Estimated usable capacity:** `kWh from Clever × share that reaches the battery ÷ rise in battery level`,
+  for sessions read from the start with a rise of at least 20 percentage points.
+  The median over the sessions is shown, and as a share of the capacity when new
+  if you enter it.
+
+The capacity figure is an estimate. Clever measures the energy before the
+charging loss and the car reports whole percentages, so losses and capacity
+cannot be told apart from one session; the share that reaches the battery is an
+assumption (90 % by default). The development over months is what tells you
+something. Cold weather and preheating lower the figure.
+
 ### Settings
 
 Under the integration's options:
@@ -192,6 +221,8 @@ Under the integration's options:
 - **Show the charging overview in the sidebar** turns the page on or off.
 - **Electricity price area** is DK1 (west of the Great Belt) or DK2. It is
   chosen from Home Assistant's location until you set it.
+- **Ask the car for fresh values when charging starts and stops** can be turned
+  off, and the car's battery level and odometer sensors can be chosen.
 
 Hourly prices are fetched from `api.energidataservice.dk` every few hours and
 kept in `.storage/clever_api.prices.<entry id>`. The assumptions you enter are
@@ -202,7 +233,8 @@ when the account is removed.
 
 Completed charging sessions (start, stop, energy, charge point and whether it
 was the home charger), the energy recorded per hour while a home session was
-running, and each month's energy surcharge rate are kept in
+running, the car's readings around each home session, and each month's energy
+surcharge rate are kept in
 `.storage/clever_api.history.<entry id>` in the Home Assistant configuration
 folder. Sessions are added as Clever reports them and are kept after they drop
 out of Clever's response. The file is deleted when the account is removed from

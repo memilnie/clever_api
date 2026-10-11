@@ -108,6 +108,8 @@ The page shows:
   and the refund rate can be corrected to match your invoices
 - a projection for a year at an expected mileage, with the mileage at which the
   two solutions cost the same
+- what a kWh costs at home under each charging pattern, the average price of
+  each hour of the day, and the hours your home charging lands in
 - every charging session with what it would have cost on your own meter
 
 Everything is calculated in the browser from your sessions and hourly
@@ -126,6 +128,7 @@ the repository over HTTP (`python3 -m http.server`) and open `docs/demo.html`.
 | Tariffs and duties on your own meter | 0.23 DKK/kWh | Net tariff, system tariff and electricity duty as stated by Clever for September 2026 |
 | VAT | 25 % | |
 | Charging power | 11 kW | |
+| When home charging takes place | A fixed window, 00–06 | Alternatives: the cheapest hours while connected, or from plug-in. Measured hours are used where they exist |
 | Subscription fee | 849 DKK from September 2026, 799 before, 899 in months before your first home charge | Clever One list prices |
 | Energy surcharge | Rate from the Clever app for the current month, Clever's published rate where known, otherwise estimated | Estimate: month's average spot price × 1.25, minus 0.89 DKK/kWh |
 | Refund of home electricity | Clever's published rate where known | Without a rate, the refund is taken to cover exactly what the electricity cost |
@@ -136,9 +139,13 @@ the repository over HTTP (`python3 -m http.server`) and open `docs/demo.html`.
 Three things the calculation cannot know:
 
 - Clever reports when the car was connected, not the hours in which it actually
-  charged. Home charging is therefore priced either from the moment of
-  connection or in the cheapest hours while connected; both are shown per
-  session, and a setting chooses which one the comparison uses.
+  charged. You therefore choose a charging pattern: a fixed window of the day
+  (for example at night), the cheapest hours while connected, or from the
+  moment of connection. The page shows the price per kWh for each of them.
+- From version 0.8.0 the integration follows the running session and records
+  the energy delivered in each hour. Those measured hours are used instead of
+  the pattern for the sessions that have them. Sessions from before 0.8.0, and
+  sessions already under way when Home Assistant started, have none.
 - A session away from home is counted as fast charging when it averaged at least
   25 kW.
 - The comparison assumes you would have charged in the same places with a
@@ -158,6 +165,9 @@ For each month:
                  + charger price ÷ (years × 12) + running cost
 
 The price of a kWh at home in a given hour is `(spot price + tariffs and duties) × (1 + VAT)`.
+The same charging pattern is used for both solutions. With a fixed window, the
+energy is placed in the window's hours while the car was connected; what does
+not fit there is charged from the moment of connection.
 
 For a year ahead, with the averages of the period shown:
 
@@ -191,7 +201,8 @@ when the account is removed.
 ## Charging history
 
 Completed charging sessions (start, stop, energy, charge point and whether it
-was the home charger) and each month's energy surcharge rate are kept in
+was the home charger), the energy recorded per hour while a home session was
+running, and each month's energy surcharge rate are kept in
 `.storage/clever_api.history.<entry id>` in the Home Assistant configuration
 folder. Sessions are added as Clever reports them and are kept after they drop
 out of Clever's response. The file is deleted when the account is removed from

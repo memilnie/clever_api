@@ -22,7 +22,7 @@ from .clever.exceptions import (
     CleverAuthenticationError,
     CleverConnectionError,
 )
-from .clever.history import merge_history
+from .clever.history import merge_history, record_progress, session_profiles
 from .clever.models import (
     ActiveTransaction,
     ChargePointState,
@@ -113,6 +113,24 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         data[CONF_FIREBASE_UID] = firebase_uid
         self.hass.config_entries.async_update_entry(self.config_entry, data=data)
 
+    def _record_charging_progress(self, data: CleverApiData) -> None:
+        """Follow the running session, so the hours it actually charged in are known."""
+        transaction = data.active_home_transaction
+        if (
+            transaction is None
+            or transaction.charging_start is None
+            or self._history is None
+        ):
+            return
+        if record_progress(
+            self._history,
+            transaction.charging_start,
+            transaction.consumed_wh,
+            dt_util.utcnow(),
+        ):
+            # Written at most every two minutes while the car charges.
+            self._history_store.async_delay_save(lambda: self._history or {}, 120)
+
     async def _async_save_history(self) -> None:
         """Add newly reported sessions and this month's surcharge rate to the store."""
         assert self._slow is not None
@@ -194,6 +212,7 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         return {
             "sessions": sessions,
             "surcharges": self._history.get("surcharges") or {},
+            "profiles": session_profiles(self._history),
             "spot": {
                 **price_series(self._prices.get("hours") or {}),
                 "area": self._prices.get("area") or self.price_area,
@@ -285,4 +304,5 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         self.update_interval = next_interval(
             vehicle_active=data.active_home_transaction is not None
         )
+        self._record_charging_progress(data)
         return data

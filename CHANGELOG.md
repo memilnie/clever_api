@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0 (2026-10-11)
+---
+ - Choose when home charging takes place in the comparison: a fixed window of the day (the new default, 00–06), the cheapest hours while connected, or from plug-in.
+ - Record the energy delivered in each hour while a home session is running, and use those measured hours where they exist.
+ - Show what a kWh costs at home under each charging pattern, the average price of each hour of the day, and the hours the home charging lands in.
+ - Show the home electricity price per month and the price per kWh for each session.
+
 ## 0.7.2 (2026-10-11)
 ---
  - Each assumption that differs from its default gets a button that puts the default back.

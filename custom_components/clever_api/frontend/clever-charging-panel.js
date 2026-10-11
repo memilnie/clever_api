@@ -9,7 +9,9 @@
 
 const DEFAULTS = {
   power: 11, addon: 0.23, vat: 25, publicFast: 3.99, publicAc: 3.49, chargerPrice: 9000, lifetime: 10,
-  extraMonthly: 0, km: 20000, kwh100: 17, homeShare: null, smart: true, sinceHome: true, months: {},
+  extraMonthly: 0, km: 20000, kwh100: 17, homeShare: null, sinceHome: true, months: {},
+  // When home charging takes place: within a fixed window, in the cheapest hours, or from plug-in.
+  mode: 'window', windowFrom: 0, windowTo: 6, useMeasured: true,
 };
 // Rates Clever has published. Other months are estimated, or filled in by the user.
 const KNOWN_SURCHARGE = {'2025-12': 0, '2026-01': 0.12, '2026-08': 0.29, '2026-09': 0.44};
@@ -20,6 +22,12 @@ const FEE_FROM_2026_09 = 849, FEE_BEFORE = 799, FEE_WITHOUT_CHARGER = 899;
 const SURCHARGE_THRESHOLD = 0.89;
 // Away from home, a session averaging at least this power counts as fast charging.
 const FAST_KW = 25;
+const PATTERNS = {window: 'Fast tidsrum', cheapest: 'Billigste timer', now: 'Straks ved tilslutning', measured: 'Målte ladetimer'};
+const two = n => String(n).padStart(2, '0');
+const windowText = set => `kl. ${two(set.windowFrom)}–${two(set.windowTo)}`;
+const inWindow = (hour, set) => set.windowFrom === set.windowTo ? true
+  : set.windowFrom < set.windowTo ? hour >= set.windowFrom && hour < set.windowTo : hour >= set.windowFrom || hour < set.windowTo;
+const patternText = (key, set) => key === 'window' ? `${PATTERNS.window} ${windowText(set)}` : PATTERNS[key];
 // The assumptions live on the server, so every device shows the same. The browser only holds
 // a copy of values the server could not save, and sends them again the next time the page opens.
 const STORAGE_KEY = 'clever_api.charging_unsaved';
@@ -46,19 +54,22 @@ const monthKey = ts => { const d = new Date(ts * 1000); return `${d.getFullYear(
 const monthDate = k => new Date(+k.slice(0, 4), +k.slice(5) - 1, 1);
 const isFast = s => !s.home && s.kwh / Math.max((s.stop - s.start) / 3600, 1 / 60) >= FAST_KW;
 
-/* Hour by hour, what one home session would cost on your own meter. `dumb` fills from the
-   moment the car is plugged in, `smart` picks the cheapest hours while it is connected. */
-export function sessionPlan(s, set, spot, fallback) {
+/* Hour by hour, what one home session costs on your own meter under each charging pattern:
+   `now` fills from the moment the car is plugged in, `cheapest` picks the cheapest hours while it
+   is connected, `window` uses the chosen hours of the day first, and `measured` is the energy
+   that was actually recorded per hour, when the integration has followed the session. */
+export function sessionPlan(s, set, spot, fallback, profile) {
+  const priceAt = t => { const raw = spot.prices[Math.floor((t - spot.start) / 3600)]; return {raw, spot: raw ?? fallback, price: ((raw ?? fallback) + set.addon) * (1 + set.vat / 100)}; };
   const slots = [];
   for (let t = Math.floor(s.start / 3600) * 3600; t < Math.max(s.stop, s.start + 1); t += 3600) {
     const hours = (Math.min(t + 3600, s.stop) - Math.max(t, s.start)) / 3600;
     if (hours <= 0) continue;
-    const raw = spot.prices[Math.floor((t - spot.start) / 3600)];
-    const spotPrice = raw ?? fallback;
-    slots.push({t, hours, spot: spotPrice, estimated: raw == null, price: (spotPrice + set.addon) * (1 + set.vat / 100), dumb: 0, smart: 0});
+    const at = priceAt(t);
+    slots.push({t, hours, hour: new Date(t * 1000).getHours(), spot: at.spot, estimated: at.raw == null, price: at.price, now: 0, cheapest: 0, window: 0, measured: 0});
   }
-  if (!slots.length) slots.push({t: s.start, hours: 1, spot: fallback, estimated: true, price: (fallback + set.addon) * (1 + set.vat / 100), dumb: 0, smart: 0});
+  if (!slots.length) { const at = priceAt(s.start); slots.push({t: s.start, hours: 1, hour: new Date(s.start * 1000).getHours(), spot: at.spot, estimated: true, price: at.price, now: 0, cheapest: 0, window: 0, measured: 0}); }
   const average = slots.reduce((a, x) => a + x.price * x.hours, 0) / slots.reduce((a, x) => a + x.hours, 0);
+  let overflow = 0;
   const fill = (order, field) => {
     let left = s.kwh, cost = 0;
     for (const slot of order) {
@@ -67,10 +78,27 @@ export function sessionPlan(s, set, spot, fallback) {
       if (left <= 1e-9) break;
     }
     // More energy than the connection time allows at this power: the rest is priced at the session average.
-    return {cost: cost + Math.max(0, left) * average, overflow: Math.max(0, left)};
+    overflow = Math.max(0, left);
+    return cost + overflow * average;
   };
-  const dumb = fill(slots, 'dumb'), smart = fill([...slots].sort((a, b) => a.price - b.price), 'smart');
-  return {slots, dumb: dumb.cost, smart: smart.cost, overflow: dumb.overflow, average};
+  const cost = {
+    now: fill(slots, 'now'),
+    cheapest: fill([...slots].sort((a, b) => a.price - b.price), 'cheapest'),
+    // The window's hours first, in order; whatever does not fit there is charged from plug-in.
+    window: fill([...slots.filter(x => inWindow(x.hour, set)), ...slots.filter(x => !inWindow(x.hour, set))], 'window'),
+    measured: null,
+  };
+  if (profile) {
+    let kwh = 0, sum = 0;
+    for (const [hour, value] of Object.entries(profile)) {
+      const t = +hour, slot = slots.find(x => x.t === t);
+      if (slot) slot.measured = value;
+      kwh += value; sum += value * priceAt(t).price;
+    }
+    // Only trusted when nearly all of the session's energy was recorded; then scaled to the billed energy.
+    if (kwh >= 0.9 * s.kwh && kwh > 0) cost.measured = sum * s.kwh / kwh;
+  }
+  return {slots, cost, overflow, average};
 }
 
 export function buildModel(data, set) {
@@ -84,18 +112,25 @@ export function buildModel(data, set) {
     const d = new Date(sessions[0].start * 1000), end = new Date((data.now || Date.now() / 1000) * 1000);
     for (let y = d.getFullYear(), m = d.getMonth(); y < end.getFullYear() || (y === end.getFullYear() && m <= end.getMonth()); m === 11 ? (y++, m = 0) : m++) {
       const k = `${y}-${String(m + 1).padStart(2, '0')}`; order.push(k);
-      months[k] = {key: k, label: fmtMonth.format(monthDate(k)), n: 0, kwh: 0, home: 0, out: 0, outFast: 0, outAc: 0, homeDumb: 0, homeSmart: 0,
+      months[k] = {key: k, label: fmtMonth.format(monthDate(k)), n: 0, kwh: 0, home: 0, out: 0, outFast: 0, outAc: 0, homeNow: 0, homeCheapest: 0, homeWindow: 0, homeChosen: 0, measured: 0,
         spot: spotSum[k] ? spotSum[k][0] / spotSum[k][1] : null};
     }
   }
+  // Recorded energy per hour, keyed by the session's start; matched to a session within two minutes.
+  const profiles = Object.entries(data.profiles || {}).map(([start, hours]) => ({start: +start, hours}));
   const rows = sessions.map(s => {
-    const m = months[monthKey(s.start)], fast = isFast(s), plan = s.home ? sessionPlan(s, set, spot, fallback) : null;
+    const m = months[monthKey(s.start)], fast = isFast(s);
+    const profile = s.home ? profiles.find(x => Math.abs(x.start - s.start) <= 120)?.hours : null;
+    const plan = s.home ? sessionPlan(s, set, spot, fallback, profile) : null;
+    const pattern = plan ? (set.useMeasured && plan.cost.measured != null ? 'measured' : set.mode) : null;
     if (m) {
       m.n++; m.kwh += s.kwh;
-      if (s.home) { m.home += s.kwh; m.homeDumb += plan.dumb; m.homeSmart += plan.smart; }
-      else { m.out += s.kwh; m[fast ? 'outFast' : 'outAc'] += s.kwh; }
+      if (s.home) {
+        m.home += s.kwh; m.homeNow += plan.cost.now; m.homeCheapest += plan.cost.cheapest; m.homeWindow += plan.cost.window;
+        m.homeChosen += plan.cost[pattern]; if (pattern === 'measured') m.measured++;
+      } else { m.out += s.kwh; m[fast ? 'outFast' : 'outAc'] += s.kwh; }
     }
-    return {...s, fast, plan, outCost: s.home ? null : s.kwh * (fast ? set.publicFast : set.publicAc)};
+    return {...s, fast, plan, pattern, homeCost: plan ? plan.cost[pattern] : null, outCost: s.home ? null : s.kwh * (fast ? set.publicFast : set.publicAc)};
   });
   for (const k of order) {
     const m = months[k], own = set.months[k] || {};
@@ -112,17 +147,18 @@ export function buildModel(data, set) {
     m.surchargeCost = m.surcharge * m.kwh;
     // With a known refund rate you pay for the home electricity and get the rate back per kWh.
     // Without one, the refund is taken to cover exactly what the electricity cost.
-    m.refundNet = m.refund == null ? 0 : m.homeDumb - m.refund * m.home;
+    // Both solutions are priced with the same charging pattern.
+    m.refundNet = m.refund == null ? 0 : m.homeChosen - m.refund * m.home;
     m.clever = m.fee + m.surchargeCost + m.refundNet;
     m.depreciation = set.chargerPrice / (set.lifetime * 12) + set.extraMonthly;
-    m.ownHome = set.smart ? m.homeSmart : m.homeDumb;
+    m.ownHome = m.homeChosen;
     m.ownOut = m.outFast * set.publicFast + m.outAc * set.publicAc;
     m.own = m.ownHome + m.ownOut + m.depreciation;
   }
   const list = order.map(k => months[k]), counted = list.filter(m => m.counted);
   const sum = f => counted.reduce((a, m) => a + f(m), 0);
   const total = {n: sum(m => m.n), kwh: sum(m => m.kwh), home: sum(m => m.home), out: sum(m => m.out), outFast: sum(m => m.outFast), outAc: sum(m => m.outAc),
-    clever: sum(m => m.clever), own: sum(m => m.own), ownHome: sum(m => m.ownHome), ownOut: sum(m => m.ownOut), surchargeCost: sum(m => m.surchargeCost), months: counted.length};
+    clever: sum(m => m.clever), own: sum(m => m.own), ownHome: sum(m => m.ownHome), ownOut: sum(m => m.ownOut), homeNow: sum(m => m.homeNow), homeCheapest: sum(m => m.homeCheapest), homeWindow: sum(m => m.homeWindow), measured: sum(m => m.measured), surchargeCost: sum(m => m.surchargeCost), months: counted.length};
   total.homePrice = total.home ? total.ownHome / total.home : (fallback + set.addon) * (1 + set.vat / 100);
   total.outPrice = total.out ? total.ownOut / total.out : set.publicFast;
   total.surchargeRate = total.kwh ? total.surchargeCost / total.kwh : 0;
@@ -133,7 +169,14 @@ export function buildModel(data, set) {
   const perKwhOwn = share * total.homePrice + (1 - share) * total.outPrice, fixedOwn = set.chargerPrice / set.lifetime + set.extraMonthly * 12;
   const year = {fee, share, kwhYear, perKwhOwn, fixedOwn, clever: fee * 12 + total.surchargeRate * kwhYear, own: fixedOwn + perKwhOwn * kwhYear,
     even: perKwhOwn > total.surchargeRate ? (fee * 12 - fixedOwn) / ((perKwhOwn - total.surchargeRate) * set.kwh100 / 100) : null};
-  return {months: list, shown: counted, rows, total, year, firstHomeMonth, fallback};
+  // Through the day: the average price of each hour, and where the home energy lands with the pattern in use.
+  const keys = new Set(counted.map(m => m.key)), day = Array.from({length: 24}, (_, hour) => ({hour, label: hour % 3 ? '' : two(hour), sum: 0, n: 0, kwh: 0}));
+  spot.prices.forEach((price, i) => { const t = spot.start + i * 3600; if (price == null || !keys.has(monthKey(t))) return; const d = day[new Date(t * 1000).getHours()]; d.sum += (price + set.addon) * (1 + set.vat / 100); d.n++; });
+  for (const row of rows) if (row.plan && keys.has(monthKey(row.start))) for (const slot of row.plan.slots) day[slot.hour].kwh += slot[row.pattern] || 0;
+  for (const d of day) d.price = d.n ? d.sum / d.n : null;
+  total.allHoursPrice = day.reduce((a, d) => a + d.sum, 0) / Math.max(1, day.reduce((a, d) => a + d.n, 0));
+  total.homeSessions = rows.filter(r => r.plan && keys.has(monthKey(r.start))).length;
+  return {months: list, shown: counted, rows, total, year, day, firstHomeMonth, fallback};
 }
 
 const STYLE = `
@@ -171,6 +214,7 @@ th { color: var(--ink2); font-weight: 500; font-size: 13px; }
 .field { display: flex; gap: 6px; align-items: center; margin: 6px 0; font-size: 14px; }
 .field label { flex: 1; } .field .unit { width: 62px; color: var(--ink2); font-size: 13px; }
 .undo { width: 26px; flex: none; } button.undo { padding: 2px 0; line-height: 1.2; }
+select { background: var(--page); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; max-width: 170px; }
 input[type=number] { width: 92px; background: var(--page); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
 td input[type=number] { width: 84px; }
 button { font: inherit; color: var(--ink); cursor: pointer; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
@@ -181,15 +225,16 @@ ul { margin: 6px 0; padding-left: 20px; } li { margin: 3px 0; }
 details > summary { cursor: pointer; font-weight: 600; font-size: 16px; }
 `;
 
-function barChart(rows, series, {stacked = false, unit = ''} = {}) {
-  const max = Math.max(1, ...rows.map(r => stacked ? series.reduce((a, s) => a + (r[s.key] || 0), 0) : Math.max(...series.map(s => r[s.key] || 0))));
+function barChart(rows, series, {stacked = false, unit = '', decimals = 0} = {}) {
+  const show = v => decimals ? kr2(v) : kr0(v);
+  const max = Math.max(decimals ? 0.01 : 1, ...rows.map(r => stacked ? series.reduce((a, s) => a + (r[s.key] || 0), 0) : Math.max(...series.map(s => r[s.key] || 0))));
   const cols = rows.map(r => {
-    const title = `${r.label}: ` + series.map(s => `${s.name} ${kr0(r[s.key])} ${unit}`).join(', ');
+    const title = `${r.hour != null ? 'kl. ' + two(r.hour) : r.label}: ` + series.map(s => `${s.name} ${show(r[s.key])} ${unit}`).join(', ');
     const bars = series.map(s => `<div class="bar" style="background:${s.color};height:${Math.max(0, (r[s.key] || 0) / max * 100)}%"></div>`);
     return `<div class="col ${stacked ? 'stack' : ''}" title="${esc(title)}">${(stacked ? bars.reverse() : bars).join('')}</div>`;
   }).join('');
   return `<div class="legend">${series.map(s => `<span><span class="swatch" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>
-    <div class="chart"><div class="yaxis"><span>${kr0(max)}</span><span>0</span></div>
+    <div class="chart"><div class="yaxis"><span>${show(max)}</span><span>0</span></div>
       <div class="plot"><div class="bars">${cols}</div><div class="xaxis">${rows.map(r => `<span>${esc(r.label)}</span>`).join('')}</div></div></div>`;
 }
 
@@ -198,6 +243,7 @@ function explainHtml(model, set, data) {
   const t = model.total, y = model.year, area = data.spot.area || '';
   const month = [...model.shown].reverse().find(m => m.kwh > 0 && m.key !== monthKey(data.now || Date.now() / 1000)) || [...model.shown].reverse().find(m => m.kwh > 0);
   const session = [...model.rows].reverse().find(s => s.home && s.plan && s.plan.slots.length <= 30);
+  const chosen = set.useMeasured && t.measured ? `${patternText(set.mode, set).toLowerCase()}, og de målte ladetimer hvor de findes` : patternText(set.mode, set).toLowerCase();
   const line = (label, calc, value) => `<tr><td>${label}</td><td class="muted">${calc}</td><td class="num">${value}</td></tr>`;
   let monthHtml = '<p class="muted small">Der er endnu ingen måned med opladninger at vise.</p>';
   if (month) {
@@ -207,10 +253,10 @@ function explainHtml(model, set, data) {
         ${line('Abonnement', 'fast pris pr. måned', kr0(m.fee))}
         ${line('Energitillæg', `${kr2(m.surcharge)} kr./kWh × ${kr0(m.kwh)} kWh <span class="small">(${esc(m.surchargeSource)})</span>`, kr0(m.surchargeCost))}
         ${m.refund == null ? line('Strøm hjemme og tilbagebetaling', 'satsen er ukendt, så de antages at gå lige op', '0')
-          : line('Strøm hjemme', `${kr0(m.home)} kWh til timeprisen fra tilslutning`, kr0(m.homeDumb)) + line('Tilbagebetaling fra Clever', `${kr3(m.refund)} kr./kWh × ${kr0(m.home)} kWh`, '−' + kr0(m.refund * m.home))}
+          : line('Strøm hjemme', `${kr0(m.home)} kWh til timeprisen (${esc(chosen)})`, kr0(m.homeChosen)) + line('Tilbagebetaling fra Clever', `${kr3(m.refund)} kr./kWh × ${kr0(m.home)} kWh`, '−' + kr0(m.refund * m.home))}
         <tr class="sum"><td>Clever i alt</td><td></td><td class="num">${kr0(m.clever)}</td></tr></table></div>
       <div class="scroll"><table class="calc" style="margin-top:12px"><tr><th>Egen ladeboks</th><th>Udregning</th><th class="num">kr.</th></tr>
-        ${line('Strøm hjemme', `${kr0(m.home)} kWh til timeprisen, ${set.smart ? 'i de billigste timer mens bilen var tilsluttet' : 'fra tilslutning'}`, kr0(m.ownHome))}
+        ${line('Strøm hjemme', `${kr0(m.home)} kWh til timeprisen (${esc(chosen)}) = ${kr2(m.home ? m.ownHome / m.home : null)} kr./kWh`, kr0(m.ownHome))}
         ${line('Hurtigladning ude', `${kr2(set.publicFast)} kr./kWh × ${kr0(m.outFast)} kWh`, kr0(m.outFast * set.publicFast))}
         ${line('Almindelig ladestander ude', `${kr2(set.publicAc)} kr./kWh × ${kr0(m.outAc)} kWh`, kr0(m.outAc * set.publicAc))}
         ${line('Afskrivning', `${kr0(set.chargerPrice)} kr. ÷ (${nice(set.lifetime)} år × 12)${set.extraMonthly ? ` + ${kr0(set.extraMonthly)} kr. løbende` : ''}`, kr0(m.depreciation))}
@@ -219,19 +265,23 @@ function explainHtml(model, set, data) {
   }
   let sessionHtml = '<p class="muted small">Der er endnu ingen hjemmeopladning at vise.</p>';
   if (session) {
-    const p = session.plan;
-    sessionHtml = `<p class="small muted">Hjemmeopladningen ${esc(fmtFull.format(new Date(session.start * 1000)))}: ${kr2(session.kwh)} kWh, bilen var tilsluttet i ${kr2((session.stop - session.start) / 3600)} timer. Med ${nice(set.power)} kW kan der højst lades ${nice(set.power)} kWh pr. hel time.</p>
-      <div class="scroll"><table class="calc"><tr><th>Time fra</th><th class="num">Spotpris</th><th class="num">Pris inkl. tillæg og moms</th><th class="num">Lader straks</th><th class="num">Billigste timer</th></tr>
+    const p = session.plan, cols = ['now', 'window', 'cheapest', ...(p.cost.measured != null ? ['measured'] : [])];
+    const short = {now: 'Straks', window: `Kl. ${two(set.windowFrom)}–${two(set.windowTo)}`, cheapest: 'Billigste', measured: 'Målt'};
+    const head = key => `${short[key]}${key === session.pattern ? ' ✓' : ''}`;
+    sessionHtml = `<p class="small muted">Hjemmeopladningen ${esc(fmtFull.format(new Date(session.start * 1000)))}: ${kr2(session.kwh)} kWh, bilen var tilsluttet i ${kr2((session.stop - session.start) / 3600)} timer. Med ${nice(set.power)} kW kan der højst lades ${nice(set.power)} kWh pr. hel time. ✓ markerer det mønster, sammenligningen bruger.</p>
+      <div class="scroll"><table class="calc"><tr><th>Time fra</th><th class="num">Spotpris</th><th class="num">Pris inkl. tillæg og moms</th>${cols.map(k => `<th class="num">${head(k)}</th>`).join('')}</tr>
         ${p.slots.map(x => `<tr><td>${esc(fmtHour.format(new Date(x.t * 1000)))}${x.hours < 0.999 ? ` <span class="muted small">(${Math.round(x.hours * 60)} min.)</span>` : ''}</td>
           <td class="num">${kr3(x.spot)}${x.estimated ? '*' : ''}</td><td class="num">${kr3(x.price)}</td>
-          <td class="num">${x.dumb ? kr2(x.dumb) + ' kWh' : ''}</td><td class="num">${x.smart ? kr2(x.smart) + ' kWh' : ''}</td></tr>`).join('')}
-        <tr class="sum"><td>Pris for opladningen</td><td></td><td></td><td class="num">${kr2(p.dumb)} kr.</td><td class="num">${kr2(p.smart)} kr.</td></tr></table></div>
-      <p class="small muted">Prisen i hver time er (spotpris + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)}. Første time i eksemplet: (${kr3(p.slots[0].spot)} + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)} = ${kr3(p.slots[0].price)} kr./kWh.${p.slots.some(x => x.estimated) ? ' * Timeprisen mangler, så periodens gennemsnit er brugt.' : ''}${p.overflow > 0.01 ? ` De sidste ${kr2(p.overflow)} kWh kan ikke nås på den tid med ${nice(set.power)} kW og er regnet til opladningens gennemsnitspris.` : ''}</p>`;
+          ${cols.map(k => `<td class="num">${x[k] ? kr2(x[k]) + ' kWh' : ''}</td>`).join('')}</tr>`).join('')}
+        <tr class="sum"><td>Pris for opladningen</td><td></td><td></td>${cols.map(k => `<td class="num">${kr2(p.cost[k])} kr.</td>`).join('')}</tr>
+        <tr><td class="muted">Pris pr. kWh</td><td></td><td></td>${cols.map(k => `<td class="num muted">${kr2(p.cost[k] / session.kwh)}</td>`).join('')}</tr></table></div>
+      <p class="small muted">Prisen i hver time er (spotpris + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)}. Første time i eksemplet: (${kr3(p.slots[0].spot)} + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)} = ${kr3(p.slots[0].price)} kr./kWh.${p.slots.some(x => x.estimated) ? ' * Timeprisen mangler, så periodens gennemsnit er brugt.' : ''}${p.overflow > 0.01 ? ` De sidste ${kr2(p.overflow)} kWh kan ikke nås på den tid med ${nice(set.power)} kW og er regnet til opladningens gennemsnitspris.` : ''} Med fast tidsrum lades først i tidsrummet; det, der ikke kan nås dér, lades fra tilslutning.</p>`;
   }
   return `<div class="card section"><details open><summary>Antagelser og regneeksempler</summary>
     <h3>Antagelser</h3>
     <ul class="small">
       <li><b>Opladninger</b> kommer fra Clever: start, slut, kWh og om det var på din egen ladeboks. Clever oplyser ikke, i hvilke timer der faktisk blev ladet, kun hvornår bilen var tilsluttet.</li>
+      <li><b>Lademønster hjemme:</b> ${esc(chosen)}. Det samme mønster bruges for Clever og for egen ladeboks. Integrationen måler de faktiske ladetimer for opladninger, den har fulgt fra start; ${t.measured} af ${t.homeSessions} hjemmeopladninger i perioden er målt.</li>
       <li><b>Timepriser</b> er spotpriser for ${esc(area)} fra Energi Data Service, uden moms. Oven i lægges ${kr2(set.addon)} kr./kWh for nettarif, systemtarif og elafgift, og derefter ${kr0(set.vat)} % moms.</li>
       <li><b>Abonnement</b> er Clevers listepris: ${FEE_FROM_2026_09} kr./md. med ladeboks fra september 2026, ${FEE_BEFORE} kr. før, og ${FEE_WITHOUT_CHARGER} kr. i måneder før din første hjemmeopladning. Ret den i tabellen, hvis du betaler noget andet.</li>
       <li><b>Energitillæg</b> betales af alle kWh, hjemme og ude. Satsen hentes fra Clever-appen for den aktuelle måned, tages fra Clevers offentliggjorte satser, hvor de kendes, og anslås ellers ud fra månedens spotpris.</li>
@@ -305,7 +355,8 @@ class CleverChargingPanel extends HTMLElement {
   }
 
   _apply(saved) {
-    saved = saved || {};
+    saved = {...(saved || {})};
+    delete saved.smart;   // replaced by `mode` in 0.8.0
     this._set = {...DEFAULTS, ...saved, months: {...(saved.months || {})}};
     this._status = '';
   }
@@ -347,6 +398,8 @@ class CleverChargingPanel extends HTMLElement {
     if (t.dataset.cs) {
       const key = t.dataset.cs;
       if (t.type === 'checkbox') set[key] = t.checked;
+      else if (t.tagName === 'SELECT') set[key] = t.value in PATTERNS ? t.value : DEFAULTS[key];
+      else if (key === 'windowFrom' || key === 'windowTo') set[key] = num == null || isNaN(num) ? DEFAULTS[key] : Math.min(23, Math.max(0, Math.round(num)));
       else if (num == null || isNaN(num)) set[key] = DEFAULTS[key];
       else set[key] = key === 'lifetime' || key === 'power' ? Math.max(0.5, num) : Math.max(0, num);
     } else {
@@ -361,8 +414,9 @@ class CleverChargingPanel extends HTMLElement {
   _draw() {
     const set = this._set, data = this._data, model = buildModel(data, set), t = model.total, y = model.year, shown = model.shown;
     // A value that differs from the default gets a button that puts the default back.
-    const undo = key => set[key] !== DEFAULTS[key] ? `<button class="undo" data-default="${key}" title="Tilbage til standardværdien ${esc(String(DEFAULTS[key] ?? 'fra dine opladninger').replace('.', ','))}" aria-label="Tilbage til standardværdien">↺</button>` : '<span class="undo"></span>';
+    const undo = key => set[key] !== DEFAULTS[key] ? `<button class="undo" data-default="${key}" title="Tilbage til standardværdien ${esc(String(PATTERNS[DEFAULTS[key]] ?? DEFAULTS[key] ?? 'fra dine opladninger').replace('.', ','))}" aria-label="Tilbage til standardværdien">↺</button>` : '<span class="undo"></span>';
     const field = (key, label, unit, step = 'any') => `<div class="field"><label>${label}</label><input type="number" step="${step}" data-cs="${key}" value="${set[key] ?? ''}"><span class="unit">${unit}</span>${undo(key)}</div>`;
+    const select = (key, label, options) => `<div class="field"><label>${label}</label><select data-cs="${key}">${Object.entries(options).map(([value, text]) => `<option value="${value}" ${set[key] === value ? 'selected' : ''}>${esc(text)}</option>`).join('')}</select>${undo(key)}</div>`;
     const check = (key, label) => `<label class="field"><input type="checkbox" data-cs="${key}" ${set[key] ? 'checked' : ''}> ${label}</label>`;
     const diff = t.own - t.clever, sessions = [...model.rows].reverse().slice(0, this._all ? 2000 : 15);
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="wrap">
@@ -379,30 +433,47 @@ class CleverChargingPanel extends HTMLElement {
       <div class="grid"><div>
         <div class="card"><h2>Pris pr. måned</h2>${barChart(shown, [{key: 'clever', name: 'Clever', color: 'var(--c1)'}, {key: 'own', name: 'Egen ladeboks', color: 'var(--c2)'}], {unit: 'kr.'})}</div>
         <div class="card section"><h2>Ladet pr. måned</h2>${barChart(shown, [{key: 'home', name: 'Hjemme', color: 'var(--c3)'}, {key: 'out', name: 'Ude', color: 'var(--c4)'}], {stacked: true, unit: 'kWh'})}</div>
+        <div class="card section"><h2>Hvad strømmen koster hjemme</h2>
+          <p class="small muted" style="margin-top:-6px">Prisen pr. kWh på din egen måler for periodens ${kr0(t.home)} kWh hjemme, alt efter hvornår der lades. Priserne er inkl. ${kr2(set.addon)} kr./kWh i tariffer og afgifter og ${kr0(set.vat)} % moms.</p>
+          <div class="scroll"><table><tr><th>Lademønster</th><th class="num">kr./kWh</th><th class="num">I alt</th><th></th></tr>
+            ${[['window', t.homeWindow], ['cheapest', t.homeCheapest], ['now', t.homeNow]].map(([key, cost]) => `<tr><td>${esc(patternText(key, set))}</td><td class="num">${kr2(t.home ? cost / t.home : null)}</td><td class="num">${kr0(cost)} kr.</td><td class="small muted">${key === set.mode ? 'valgt' : ''}</td></tr>`).join('')}
+            ${t.measured ? `<tr><td>Med målte ladetimer hvor de findes (${t.measured} af ${t.homeSessions} opladninger)</td><td class="num">${kr2(t.home ? t.ownHome / t.home : null)}</td><td class="num">${kr0(t.ownHome)} kr.</td><td class="small muted">${set.useMeasured ? 'bruges' : ''}</td></tr>` : ''}
+            <tr><td class="muted">Til sammenligning: gennemsnit af alle timer i perioden</td><td class="num muted">${kr2(t.allHoursPrice)}</td><td></td><td></td></tr>
+          </table></div>
+          <p class="small muted"><b>Sammenligningen bruger ${kr2(t.homePrice)} kr./kWh.</b> ${t.measured ? '' : 'Ingen opladninger er målt endnu; de faktiske ladetimer registreres fra nu af, mens bilen lader.'}</p>
+          <h3>Gennemsnitspris for hver time på døgnet</h3>
+          ${barChart(model.day, [{key: 'price', name: 'kr./kWh inkl. tillæg og moms', color: 'var(--c1)'}], {unit: 'kr./kWh', decimals: 2})}
+          <h3>Hvor dine kWh hjemme lander med det valgte mønster</h3>
+          ${barChart(model.day, [{key: 'kwh', name: 'kWh ladet i timen', color: 'var(--c3)'}], {unit: 'kWh'})}
+        </div>
         <div class="card section"><h2>Måned for måned</h2>
           <p class="small muted" style="margin-top:-6px">Abonnement, energitillæg og tilbagebetaling kan rettes, så de passer med dine fakturaer. Et tomt felt bruger standardværdien.</p>
           <div class="scroll"><table>
-            <tr><th>Måned</th><th class="num">kWh</th><th class="num">Hjemme</th><th>Abonnement</th><th>Energitillæg kr./kWh</th><th>Tilbagebetaling kr./kWh</th><th class="num">Clever</th><th class="num">Egen boks</th></tr>
+            <tr><th>Måned</th><th class="num">kWh</th><th class="num">Hjemme</th><th class="num">Strømpris hjemme</th><th>Abonnement</th><th>Energitillæg kr./kWh</th><th>Tilbagebetaling kr./kWh</th><th class="num">Clever</th><th class="num">Egen boks</th></tr>
             ${shown.map(m => { const own = set.months[m.key] || {};
               const cell = (f, def) => `<input type="number" step="any" data-cm="${m.key}:${f}" value="${own[f] ?? ''}" placeholder="${def == null ? 'ukendt' : String(def).replace('.', ',')}">`;
-              return `<tr><td>${esc(m.label)}</td><td class="num">${kr0(m.kwh)}</td><td class="num">${kr0(m.home)}</td><td>${cell('fee', m.feeDefault)}</td>
+              return `<tr><td>${esc(m.label)}</td><td class="num">${kr0(m.kwh)}</td><td class="num">${kr0(m.home)}</td><td class="num">${m.home ? kr2(m.homeChosen / m.home) : '–'}</td><td>${cell('fee', m.feeDefault)}</td>
                 <td>${cell('surcharge', m.surchargeDefault)}<div class="small muted">${esc(m.surchargeSource)}</div></td><td>${cell('refund', m.refundDefault)}</td>
                 <td class="num">${kr0(m.clever)}</td><td class="num">${kr0(m.own)}</td></tr>`; }).join('')}
-            <tr><th>I alt</th><th class="num">${kr0(t.kwh)}</th><th class="num">${kr0(t.home)}</th><th></th><th></th><th></th><th class="num">${kr0(t.clever)}</th><th class="num">${kr0(t.own)}</th></tr>
+            <tr><th>I alt</th><th class="num">${kr0(t.kwh)}</th><th class="num">${kr0(t.home)}</th><th class="num">${kr2(t.homePrice)}</th><th></th><th></th><th></th><th class="num">${kr0(t.clever)}</th><th class="num">${kr0(t.own)}</th></tr>
           </table></div></div>
         ${explainHtml(model, set, data)}
         <div class="card section"><h2>Opladninger</h2><div class="scroll"><table>
-          <tr><th>Start</th><th>Sted</th><th class="num">Tilsluttet</th><th class="num">kWh</th><th class="num">Egen boks, straks</th><th class="num">Egen boks, billigste timer</th></tr>
+          <tr><th>Start</th><th>Sted</th><th class="num">Tilsluttet</th><th class="num">kWh</th><th class="num">Egen boks</th><th class="num">kr./kWh</th><th>Grundlag</th></tr>
           ${sessions.map(s => `<tr><td>${esc(fmtFull.format(new Date(s.start * 1000)))}</td><td>${s.home ? 'Hjemme' : s.fast ? 'Ude, hurtiglader' : 'Ude'}</td>
             <td class="num">${kr2((s.stop - s.start) / 3600)} t</td><td class="num">${kr2(s.kwh)}</td>
-            <td class="num">${kr0(s.plan ? s.plan.dumb : s.outCost)} kr.</td><td class="num">${kr0(s.plan ? s.plan.smart : s.outCost)} kr.</td></tr>`).join('')}
+            <td class="num">${kr0(s.plan ? s.homeCost : s.outCost)} kr.</td><td class="num">${kr2((s.plan ? s.homeCost : s.outCost) / s.kwh)}</td>
+            <td class="small muted">${s.plan ? esc(patternText(s.pattern, set)) : 'pris uden abonnement'}</td></tr>`).join('')}
         </table></div>${model.rows.length > 15 && !this._all ? `<p><button id="all">Vis alle ${model.rows.length}</button></p>` : ''}</div>
       </div><div>
         <div class="card"><h2>Forudsætninger</h2>
           ${check('sinceHome', 'Regn kun fra første hjemmeopladning')}
           <div class="small muted" style="margin:8px 0 4px">Strøm på egen måler</div>
           ${field('addon', 'Tariffer og afgifter', 'kr./kWh')}${field('vat', 'Moms', '%')}${field('power', 'Ladeeffekt', 'kW')}
-          ${check('smart', 'Lad i de billigste timer, mens bilen er tilsluttet')}
+          <div class="small muted" style="margin:8px 0 4px">Hvornår der lades hjemme</div>
+          ${select('mode', 'Lademønster', {window: 'Fast tidsrum', cheapest: 'Billigste timer', now: 'Straks ved tilslutning'})}
+          ${set.mode === 'window' ? field('windowFrom', 'Fra klokken', '', '1') + field('windowTo', 'Til klokken', '', '1') : ''}
+          ${check('useMeasured', `Brug målte ladetimer, når de findes (${t.measured} af ${t.homeSessions})`)}
           <div class="small muted" style="margin:8px 0 4px">Egen ladeboks</div>
           ${field('chargerPrice', 'Ladeboks og installation', 'kr.')}${field('lifetime', 'Afskrives over', 'år')}${field('extraMonthly', 'Løbende udgift', 'kr./md.')}
           <div class="small muted" style="margin:8px 0 4px">Udeladning uden abonnement</div>

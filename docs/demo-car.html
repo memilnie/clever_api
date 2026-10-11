@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="da">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clever car page – demo</title>
+<style>html, body { margin: 0; height: 100%; }</style>
+</head>
+<body>
+<!--
+  The car page with made-up data, for trying it without Home Assistant and for the screenshot
+  in the README. Serve the repository root over HTTP and open /docs/demo-car.html.
+-->
+<clever-car-panel></clever-car-panel>
+<script type="module">
+import '../custom_components/clever_api/frontend/clever-car-panel.js';
+
+let seed = 20261011;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+const utc = (y, m, d, h = 0, min = 0) => Date.UTC(y, m - 1, d, h, min) / 1000;
+const now = utc(2026, 10, 10, 16), day = 86400;
+const key = t => new Date(t * 1000).toISOString().slice(0, 10);
+
+// Daily driving since mid-June: commuting on weekdays, the odd long trip, quiet days at home.
+const driving = {}, odometer = {};
+let total = 131400;
+for (let t = utc(2026, 6, 15, 12); t < now; t += day) {
+  const weekday = new Date(t * 1000).getUTCDay(), roll = rnd();
+  const distance = roll < 0.04 ? 380 + Math.round(rnd() * 300) : weekday === 0 || weekday === 6 ? (roll < 0.5 ? 0 : 20 + Math.round(rnd() * 90)) : 38 + Math.round(rnd() * 40);
+  total += distance; odometer[key(t)] = total;
+  if (!distance) continue;
+  const engine = Math.round(distance * (148 + rnd() * 30)), climate = Math.round(distance * (6 + rnd() * 10)), electronics = Math.round(distance * (5 + rnd() * 3));
+  const care = rnd() < 0.08 ? Math.round(200 + rnd() * 400) : 0;
+  driving[key(t)] = {distance, engine_consumption: engine, climate_consumption: climate, onboard_electronics_consumption: electronics,
+    battery_care_consumption: care, total_consumed: engine + climate + electronics + care, regenerated_energy: Math.round(distance * (22 + rnd() * 14))};
+}
+// Charging since January: mostly at home in the evening, fast charging on trips.
+const sessions = [];
+for (let t = utc(2026, 1, 12); t < now - day; t += day) {
+  const roll = rnd();
+  if (roll < 0.36) { const begin = t + (15 + rnd() * 4) * 3600; sessions.push({start: Math.round(begin), stop: Math.round(begin + (11 + rnd() * 4) * 3600), kwh: Math.round((14 + rnd() * 34) * 100) / 100, home: true}); }
+  else if (roll < 0.45) { const begin = t + (8 + rnd() * 9) * 3600; sessions.push({start: Math.round(begin), stop: Math.round(begin + (18 + rnd() * 20) * 60), kwh: Math.round((22 + rnd() * 30) * 100) / 100, home: false}); }
+}
+let saved = {services: [
+  {id: 'service', name: 'Service', km: 30000, months: 24, last_km: 120300, last_date: '2025-05-14'},
+  {id: 'syn', name: 'Syn', km: null, months: 24, last_km: null, last_date: '2024-11-02'},
+  {id: 'daek', name: 'Skift til vinterdæk', km: null, months: 12, last_km: null, last_date: '2025-10-25'},
+  {id: 'filter', name: 'Kabinefilter', km: 15000, months: 12, last_km: 127000, last_date: null},
+]};
+document.querySelector('clever-car-panel').provider = {
+  load: async () => ({sessions, driving, odometer, now, car_settings: saved,
+    vehicle_now: {soc: 82, odometer: total, range: 318, consumption_30d: 171, battery_12v: 88, regenerated: 2412000}}),
+  saveCar: async settings => { saved = settings; },
+};
+</script>
+</body>
+</html>

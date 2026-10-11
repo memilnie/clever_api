@@ -42,7 +42,7 @@
         "data": {
           "subscription_fee": "Månedlig abonnementspris",
           "read_only": "Kun læsning (ingen kontakter eller styring)",
-          "show_panel": "Vis opladningsoversigten i sidemenuen",
+          "show_panel": "Vis opladningsoversigten og bilsiden i sidemenuen",
           "price_area": "Prisområde for strøm",
           "vehicle_refresh": "Bed bilen om friske værdier, når ladning starter og stopper",
           "vehicle_soc_entity": "Bilens sensor for batteriniveau",
@@ -51,7 +51,7 @@
         "data_description": {
           "subscription_fee": "Kroner pr. måned. Clever One koster 849 med ladeboks og 999 uden (fra 1. september 2026).",
           "read_only": "Slås det fra, tilføjes kontakterne til forvarmning og boost samt handlingerne til intelligent opladning.",
-          "show_panel": "En side der sammenligner, hvad Clever har kostet, med hvad din egen ladeboks ville have kostet.",
+          "show_panel": "To sider: Clever sammenlignet med din egen ladeboks, og statistik for bilen.",
           "price_area": "DK1 er vest for Storebælt, DK2 øst for. Bruges til timepriser fra Energi Data Service.",
           "vehicle_refresh": "Bruger Hyundai/Kia-integrationens tvungne opdatering, som vækker bilen. Højst én gang hvert tiende minut.",
           "vehicle_soc_entity": "Lad feltet stå tomt for at bruge Hyundai/Kia-integrationens sensor, når den er installeret.",

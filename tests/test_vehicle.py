@@ -9,7 +9,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "custom_components" / "clever_api"))
 
-from clever.vehicle import add_reading, session_events, vehicle_readings
+from clever.vehicle import (
+    add_reading,
+    daily_driving,
+    log_odometer,
+    merge_driving,
+    session_events,
+    vehicle_readings,
+)
 
 A = "2026-10-12T17:30:00+00:00"
 B = "2026-10-13T18:00:00+00:00"
@@ -77,6 +84,41 @@ class ReadingTests(unittest.TestCase):
         when = datetime(2026, 10, 12, 17, 31, tzinfo=UTC)
         self.assertFalse(add_reading(history, A, "connected", when, {"soc": None}))
         self.assertEqual(history.get("vehicle", {}).get(A, []), [])
+
+
+DRIVING_ATTRIBUTES = {
+    "2026-10-08": {
+        "total_consumed": 114538,
+        "engine_consumption": 106207,
+        "distance": 659,
+    },
+    "2026-10-09": {"total_consumed": 3314, "distance": 23, "note": "ignored"},
+    "friendly_name": "Daily driving stats",
+    "today_date": "2026-10-11",
+    "2026-10-1x": "not a day",
+}
+
+
+class DrivingTests(unittest.TestCase):
+    def test_only_dated_entries_with_a_distance_are_picked(self) -> None:
+        days = daily_driving(DRIVING_ATTRIBUTES)
+        self.assertEqual(sorted(days), ["2026-10-08", "2026-10-09"])
+        self.assertEqual(days["2026-10-08"]["distance"], 659.0)
+        self.assertNotIn("note", days["2026-10-09"])
+
+    def test_days_accumulate_beyond_what_the_car_remembers(self) -> None:
+        history: dict = {"driving": {"2026-09-01": {"distance": 40.0}}}
+        self.assertTrue(merge_driving(history, daily_driving(DRIVING_ATTRIBUTES)))
+        self.assertEqual(len(history["driving"]), 3)
+        self.assertFalse(merge_driving(history, daily_driving(DRIVING_ATTRIBUTES)))
+
+    def test_odometer_keeps_the_latest_reading_of_each_day(self) -> None:
+        history: dict = {}
+        self.assertTrue(log_odometer(history, "2026-10-11", 135697.7))
+        self.assertFalse(log_odometer(history, "2026-10-11", 135697.7))
+        self.assertTrue(log_odometer(history, "2026-10-11", 135740.0))
+        self.assertFalse(log_odometer(history, "2026-10-12", None))
+        self.assertEqual(history["odometer"], {"2026-10-11": 135740.0})
 
 
 if __name__ == "__main__":

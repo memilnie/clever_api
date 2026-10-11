@@ -29,6 +29,30 @@ SETTINGS_SCHEMA = vol.Schema(
 )
 
 
+_OPTIONAL_NUMBER = vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=1e7)))
+CAR_SETTINGS_SCHEMA = vol.Schema(
+    {
+        # Service intervals: by distance, by time, or both, counted from the last time it was done.
+        vol.Optional("services"): vol.All(
+            [
+                {
+                    vol.Required("id"): vol.All(str, vol.Length(max=40)),
+                    vol.Required("name"): vol.All(str, vol.Length(max=80)),
+                    vol.Optional("km"): _OPTIONAL_NUMBER,
+                    vol.Optional("months"): _OPTIONAL_NUMBER,
+                    vol.Optional("last_km"): _OPTIONAL_NUMBER,
+                    vol.Optional("last_date"): vol.Any(
+                        None, vol.Match(r"^\d{4}-\d{2}-\d{2}$")
+                    ),
+                }
+            ],
+            vol.Length(max=40),
+        ),
+        vol.Optional("kmPerLitre"): _OPTIONAL_NUMBER,
+    }
+)
+
+
 def _coordinator(
     hass: HomeAssistant, entry_id: str | None
 ) -> CleverApiUpdateCoordinator | None:
@@ -76,7 +100,28 @@ async def ws_save_settings(
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "clever_api/car/save_settings",
+        vol.Optional("entry_id"): str,
+        vol.Required("settings"): CAR_SETTINGS_SCHEMA,
+    }
+)
+@websocket_api.async_response
+async def ws_save_car_settings(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Save the service intervals entered on the car page."""
+    coordinator = _coordinator(hass, msg.get("entry_id"))
+    if coordinator is None:
+        connection.send_error(msg["id"], "not_found", "No Clever account is loaded")
+        return
+    await coordinator.async_save_car_settings(msg["settings"])
+    connection.send_result(msg["id"])
+
+
 @callback
 def async_register_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_get_charging)
     websocket_api.async_register_command(hass, ws_save_settings)
+    websocket_api.async_register_command(hass, ws_save_car_settings)

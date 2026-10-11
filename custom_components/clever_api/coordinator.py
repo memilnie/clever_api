@@ -46,6 +46,9 @@ from .clever.prices import (
 from .clever.vehicle import (
     SessionState,
     add_reading,
+    daily_driving,
+    log_odometer,
+    merge_driving,
     session_events,
     vehicle_readings,
 )
@@ -74,6 +77,10 @@ KIA_UVO_KEYS = {
     "soc": ("_ev_battery_percentage",),
     "odometer": ("__odometer", "_odometer"),
     "range": ("__ev_driving_range",),
+    "consumption_30d": ("_power_consumption_30d",),
+    "battery_12v": ("_car_battery_percentage",),
+    "regenerated": ("_total_power_regenerated",),
+    "consumed_90d": ("_total_power_consumed",),
 }
 
 
@@ -90,6 +97,11 @@ def price_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
 def settings_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
     """Return the store holding the assumptions entered in the charging panel."""
     return Store(hass, 1, f"{DOMAIN}.charging_settings.{entry_id}")
+
+
+def car_settings_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
+    """Return the store holding the service intervals entered on the car page."""
+    return Store(hass, 1, f"{DOMAIN}.car_settings.{entry_id}")
 
 
 class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
@@ -111,6 +123,7 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         self._price_store = price_store(hass, entry.entry_id)
         self._prices: dict[str, Any] | None = None
         self._settings_store = settings_store(hass, entry.entry_id)
+        self._car_settings_store = car_settings_store(hass, entry.entry_id)
         self._vehicle_previous: SessionState | None = None
         self._vehicle_refreshed_at = 0.0
         # Read-only entries get no switches and are skipped by the control actions.
@@ -181,6 +194,25 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
             except ValueError:
                 values[name] = None
         return values
+
+    def _log_vehicle_day(self) -> None:
+        """Keep today's odometer reading and the car's daily driving statistics."""
+        if self._history is None:
+            return
+        changed = log_odometer(
+            self._history,
+            dt_util.now().strftime("%Y-%m-%d"),
+            self._vehicle_values().get("odometer"),
+        )
+        registry = er.async_get(self.hass)
+        for entity in registry.entities.values():
+            if entity.platform != KIA_UVO or entity.domain != "sensor":
+                continue
+            state = self.hass.states.get(entity.entity_id)
+            if state is not None:
+                changed |= merge_driving(self._history, daily_driving(state.attributes))
+        if changed:
+            self._history_store.async_delay_save(lambda: self._history or {}, 120)
 
     def _track_vehicle(self, data: CleverApiData) -> None:
         """Read the car when the home session is connected, starts or stops charging, or ends."""
@@ -311,6 +343,9 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
             "profiles": session_profiles(self._history),
             "vehicle": vehicle_readings(self._history),
             "vehicle_now": self._vehicle_values(),
+            "driving": self._history.get("driving") or {},
+            "odometer": self._history.get("odometer") or {},
+            "car_settings": await self._car_settings_store.async_load() or {},
             "spot": {
                 **price_series(self._prices.get("hours") or {}),
                 "area": self._prices.get("area") or self.price_area,
@@ -321,6 +356,9 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
 
     async def async_save_charging_settings(self, settings: dict[str, Any]) -> None:
         await self._settings_store.async_save(settings)
+
+    async def async_save_car_settings(self, settings: dict[str, Any]) -> None:
+        await self._car_settings_store.async_save(settings)
 
     async def async_refresh_configuration(self) -> None:
         """Refresh REST configuration after a control request."""
@@ -404,4 +442,5 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         )
         self._record_charging_progress(data)
         self._track_vehicle(data)
+        self._log_vehicle_day()
         return data

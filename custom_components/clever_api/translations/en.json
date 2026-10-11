@@ -42,7 +42,7 @@
         "data": {
           "subscription_fee": "Monthly subscription fee",
           "read_only": "Read-only (no switches or control actions)",
-          "show_panel": "Show the charging overview in the sidebar",
+          "show_panel": "Show the charging overview and the car page in the sidebar",
           "price_area": "Electricity price area",
           "vehicle_refresh": "Ask the car for fresh values when charging starts and stops",
           "vehicle_soc_entity": "Battery level sensor of the car",
@@ -51,7 +51,7 @@
         "data_description": {
           "subscription_fee": "DKK per month. Clever One costs 849 with a home charger and 999 without (from 1 September 2026).",
           "read_only": "Turning this off adds the preheat and boost switches and the intelligent-charging actions.",
-          "show_panel": "A page comparing what Clever has cost with what a charger of your own would have cost.",
+          "show_panel": "Two pages: Clever compared with a charger of your own, and statistics for the car.",
           "price_area": "DK1 is west of the Great Belt, DK2 east of it. Used for hourly prices from Energi Data Service.",
           "vehicle_refresh": "Uses the Hyundai/Kia integration's forced update, which wakes the car. At most once every ten minutes.",
           "vehicle_soc_entity": "Leave empty to use the Hyundai/Kia integration's sensor when it is installed.",

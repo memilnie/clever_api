@@ -214,11 +214,44 @@ cannot be told apart from one session; the share that reaches the battery is an
 assumption (90 % by default). The development over months is what tells you
 something. Cold weather and preheating lower the figure.
 
+## The car page
+
+A second sidebar page, **Bil**, starts from the car instead of the charger.
+
+![The car page with summaries, energy use, charging habits and service intervals](docs/images/car-page.png)
+
+- **Summaries per week, month and year:** kilometres driven, energy used from
+  the battery, consumption per 100 km, number of charging sessions, energy
+  charged, and how much of it at home and on fast chargers.
+- **Where the energy goes:** drivetrain, climate, electronics and battery care,
+  and how much was regenerated.
+- **When you charge:** sessions per weekday and by starting hour.
+- **Fun figures:** longest day of driving, largest charging session, hours
+  connected to a charger, regenerated energy, and petrol saved at a fuel
+  economy you choose.
+- **Service and inspections:** a list you fill in with an interval in
+  kilometres, months or both, and when each item was last done. The page shows
+  what is left, estimates when a distance will be reached from the last 30
+  days of driving, and marks items that are due soon or overdue.
+
+Driving figures come from the Hyundai/Kia integration, which publishes about a
+month of daily statistics. This integration keeps them, together with each
+day's odometer reading, so the history grows from the day it is installed.
+Charging comes from Clever and goes back further, so older periods show
+charging only. Without the Hyundai/Kia integration the page shows the charging
+figures and, if you have chosen an odometer sensor in the options, distances
+from the odometer.
+
+The service list is saved in Home Assistant, in
+`.storage/clever_api.car_settings.<entry id>`. To try the page without Home
+Assistant, open `docs/demo-car.html` the same way as the charging demo.
+
 ### Settings
 
 Under the integration's options:
 
-- **Show the charging overview in the sidebar** turns the page on or off.
+- **Show the charging overview and the car page in the sidebar** turns the
+  two pages on or off.
 - **Electricity price area** is DK1 (west of the Great Belt) or DK2. It is
   chosen from Home Assistant's location until you set it.
 - **Ask the car for fresh values when charging starts and stops** can be turned
@@ -233,8 +266,8 @@ when the account is removed.
 
 Completed charging sessions (start, stop, energy, charge point and whether it
 was the home charger), the energy recorded per hour while a home session was
-running, the car's readings around each home session, and each month's energy
-surcharge rate are kept in
+running, the car's readings around each home session, the car's daily driving
+statistics and odometer, and each month's energy surcharge rate are kept in
 `.storage/clever_api.history.<entry id>` in the Home Assistant configuration
 folder. Sessions are added as Clever reports them and are kept after they drop
 out of Clever's response. The file is deleted when the account is removed from

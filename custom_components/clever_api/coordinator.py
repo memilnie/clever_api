@@ -11,6 +11,7 @@ from aiohttp import ClientError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -42,12 +43,21 @@ from .clever.prices import (
     price_area_for,
     price_series,
 )
+from .clever.vehicle import (
+    SessionState,
+    add_reading,
+    session_events,
+    vehicle_readings,
+)
 from .const import (
     CONF_FIREBASE_UID,
     CONF_PRICE_AREA,
     CONF_READ_ONLY,
     CONF_REFRESH_TOKEN,
     CONF_SUBSCRIPTION_FEE,
+    CONF_VEHICLE_ODOMETER,
+    CONF_VEHICLE_REFRESH,
+    CONF_VEHICLE_SOC,
     DOMAIN,
     LOGGER,
 )
@@ -55,6 +65,16 @@ from .const import (
 SLOW_REFRESH_SECONDS = 60 * 60
 HISTORY_STORAGE_VERSION = 1
 PRICE_REFRESH_SECONDS = 3 * 60 * 60
+# A forced refresh wakes the car, so it is asked at most this often.
+VEHICLE_REFRESH_MIN_SECONDS = 10 * 60
+VEHICLE_REFRESH_TIMEOUT = 180
+# The Hyundai/Kia integration is found automatically; other cars are chosen in the options.
+KIA_UVO = "kia_uvo"
+KIA_UVO_KEYS = {
+    "soc": ("_ev_battery_percentage",),
+    "odometer": ("__odometer", "_odometer"),
+    "range": ("__ev_driving_range",),
+}
 
 
 def history_store(hass: HomeAssistant, entry_id: str) -> Store[dict[str, Any]]:
@@ -91,6 +111,8 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         self._price_store = price_store(hass, entry.entry_id)
         self._prices: dict[str, Any] | None = None
         self._settings_store = settings_store(hass, entry.entry_id)
+        self._vehicle_previous: SessionState | None = None
+        self._vehicle_refreshed_at = 0.0
         # Read-only entries get no switches and are skipped by the control actions.
         self.read_only = bool(entry.data.get(CONF_READ_ONLY, False))
         self.platforms: list[Any] = []
@@ -130,6 +152,80 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
         ):
             # Written at most every two minutes while the car charges.
             self._history_store.async_delay_save(lambda: self._history or {}, 120)
+
+    def vehicle_entities(self) -> dict[str, str]:
+        """Return the car's battery level, odometer and range sensors, where known."""
+        found: dict[str, str] = {}
+        registry = er.async_get(self.hass)
+        for entity in registry.entities.values():
+            if entity.platform != KIA_UVO or entity.disabled:
+                continue
+            for name, endings in KIA_UVO_KEYS.items():
+                if name not in found and str(entity.unique_id).endswith(endings):
+                    found[name] = entity.entity_id
+        # Sensors chosen in the options take precedence.
+        for name, option in (
+            ("soc", CONF_VEHICLE_SOC),
+            ("odometer", CONF_VEHICLE_ODOMETER),
+        ):
+            if self.config_entry.data.get(option):
+                found[name] = self.config_entry.data[option]
+        return found
+
+    def _vehicle_values(self) -> dict[str, float | None]:
+        values: dict[str, float | None] = {}
+        for name, entity_id in self.vehicle_entities().items():
+            state = self.hass.states.get(entity_id)
+            try:
+                values[name] = float(state.state) if state else None
+            except ValueError:
+                values[name] = None
+        return values
+
+    def _track_vehicle(self, data: CleverApiData) -> None:
+        """Read the car when the home session is connected, starts or stops charging, or ends."""
+        transaction = data.active_home_transaction
+        current: SessionState = (
+            transaction.charging_start.isoformat()
+            if transaction and transaction.charging_start
+            else None,
+            bool(transaction and transaction.status.casefold() == "charging"),
+        )
+        events = session_events(self._vehicle_previous, current)
+        self._vehicle_previous = current
+        if events and self._history is not None and self.vehicle_entities():
+            self.config_entry.async_create_background_task(
+                self.hass,
+                self._async_read_vehicle(events),
+                "clever_api vehicle reading",
+            )
+
+    async def _async_read_vehicle(self, events: list[tuple[str, str]]) -> None:
+        """Ask the car for fresh values, then store them with the session."""
+        fresh = any(event != "seen" for _, event in events)
+        if (
+            fresh
+            and self.config_entry.data.get(CONF_VEHICLE_REFRESH, True)
+            and self.hass.services.has_service(KIA_UVO, "force_update")
+            and time.monotonic() - self._vehicle_refreshed_at
+            > VEHICLE_REFRESH_MIN_SECONDS
+        ):
+            self._vehicle_refreshed_at = time.monotonic()
+            try:
+                async with asyncio.timeout(VEHICLE_REFRESH_TIMEOUT):
+                    await self.hass.services.async_call(
+                        KIA_UVO, "force_update", {}, blocking=True
+                    )
+            except Exception as error:  # noqa: BLE001 - the cached values are still worth storing
+                LOGGER.debug("Could not refresh the vehicle: %s", error)
+        values = self._vehicle_values()
+        now = dt_util.utcnow()
+        assert self._history is not None
+        stored = [
+            add_reading(self._history, key, event, now, values) for key, event in events
+        ]
+        if any(stored):
+            await self._history_store.async_save(self._history)
 
     async def _async_save_history(self) -> None:
         """Add newly reported sessions and this month's surcharge rate to the store."""
@@ -213,6 +309,8 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
             "sessions": sessions,
             "surcharges": self._history.get("surcharges") or {},
             "profiles": session_profiles(self._history),
+            "vehicle": vehicle_readings(self._history),
+            "vehicle_now": self._vehicle_values(),
             "spot": {
                 **price_series(self._prices.get("hours") or {}),
                 "area": self._prices.get("area") or self.price_area,
@@ -305,4 +403,5 @@ class CleverApiUpdateCoordinator(DataUpdateCoordinator[CleverApiData]):
             vehicle_active=data.active_home_transaction is not None
         )
         self._record_charging_progress(data)
+        self._track_vehicle(data)
         return data

@@ -29,12 +29,18 @@ from .const import (
     CONF_SHOW_PANEL,
     CONF_SUBSCRIPTION_FEE,
     CONF_USER_ID,
+    CONF_VEHICLE_ODOMETER,
+    CONF_VEHICLE_REFRESH,
+    CONF_VEHICLE_SOC,
     DEFAULT_SUBSCRIPTION_FEE,
     DOMAIN,
     LOGGER,
     PRICE_AREAS,
 )
 
+SENSOR_SELECTOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
+)
 PASSWORD_SELECTOR = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
 )
@@ -207,6 +213,10 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
             data[CONF_READ_ONLY] = bool(user_input[CONF_READ_ONLY])
             data[CONF_SHOW_PANEL] = bool(user_input[CONF_SHOW_PANEL])
             data[CONF_PRICE_AREA] = user_input[CONF_PRICE_AREA]
+            data[CONF_VEHICLE_REFRESH] = bool(user_input[CONF_VEHICLE_REFRESH])
+            # An emptied field means "find the car's sensors automatically".
+            data[CONF_VEHICLE_SOC] = user_input.get(CONF_VEHICLE_SOC)
+            data[CONF_VEHICLE_ODOMETER] = user_input.get(CONF_VEHICLE_ODOMETER)
             self.hass.config_entries.async_update_entry(self._config_entry, data=data)
             if (data[CONF_READ_ONLY], data[CONF_SHOW_PANEL]) != before:
                 # Switches, control actions and the sidebar panel are added or removed on reload.
@@ -237,6 +247,26 @@ class CleverOptionsFlow(config_entries.OptionsFlow):
                         default=self._config_entry.data.get(CONF_PRICE_AREA)
                         or price_area_for(self.hass.config.longitude),
                     ): vol.In(PRICE_AREAS),
+                    vol.Required(
+                        CONF_VEHICLE_REFRESH,
+                        default=self._config_entry.data.get(CONF_VEHICLE_REFRESH, True),
+                    ): bool,
+                    vol.Optional(
+                        CONF_VEHICLE_SOC,
+                        description={
+                            "suggested_value": self._config_entry.data.get(
+                                CONF_VEHICLE_SOC
+                            )
+                        },
+                    ): SENSOR_SELECTOR,
+                    vol.Optional(
+                        CONF_VEHICLE_ODOMETER,
+                        description={
+                            "suggested_value": self._config_entry.data.get(
+                                CONF_VEHICLE_ODOMETER
+                            )
+                        },
+                    ): SENSOR_SELECTOR,
                 }
             ),
         )

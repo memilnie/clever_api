@@ -52,9 +52,23 @@ for (const session of sessions.filter(s => s.home).slice(-6)) {
   while (left > 0.001) { hours[t] = Math.round(Math.min(11, left) * 1000) / 1000; left -= hours[t]; t += 3600; }
   profiles[session.start] = hours;
 }
+// The car was read at the start and end of the newest home sessions.
+const vehicle = {};
+let odometer = 135200, previous = null;
+for (const session of sessions.filter(s => s.home).slice(-9)) {
+  // Everything charged since the previous home session, at home and away, was driven at about 19 kWh/100 km.
+  if (previous) odometer += Math.round(sessions.filter(s => s.start >= previous.start && s.start < session.start).reduce((sum, s) => sum + s.kwh, 0) / 0.19);
+  const gain = Math.round(session.kwh * 0.9 / 71.5 * 100), from = Math.min(95 - gain, 18 + Math.round(rnd() * 25));
+  vehicle[session.start] = [
+    {event: 'connected', time: session.start + 60, soc: from, odometer},
+    {event: 'charging_stopped', time: session.stop - 3600, soc: from + gain, odometer},
+    {event: 'disconnected', time: session.stop + 60, soc: from + gain, odometer},
+  ];
+  previous = session;
+}
 let saved = {};
 document.querySelector('clever-charging-panel').provider = {
-  load: async () => ({sessions, profiles, surcharges: {'2026-10': 0.52}, spot: {start, prices, area: 'DK1'}, settings: saved, now}),
+  load: async () => ({sessions, profiles, vehicle, vehicle_now: {soc: 82, odometer, range: 318}, surcharges: {'2026-10': 0.52}, spot: {start, prices, area: 'DK1'}, settings: saved, now}),
   save: async settings => { saved = settings; },
 };
 </script>

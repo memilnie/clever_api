@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0 (2026-10-11)
+---
+ - Read the car's battery level and odometer when a home charging session is connected, starts or stops charging, or ends. The Hyundai/Kia integration's sensors are found automatically; other cars are chosen in the options.
+ - Show the car and battery on the charging page: measured consumption including charging losses, and an estimate of the battery's usable capacity.
+
 ## 0.8.0 (2026-10-11)
 ---
  - Choose when home charging takes place in the comparison: a fixed window of the day (the new default, 00–06), the cheapest hours while connected, or from plug-in.

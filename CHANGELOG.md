@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.2 (2026-10-11)
+---
+ - Each assumption that differs from its default gets a button that puts the default back.
+ - A page that embeds the charging overview read-only now lets you try other values without saving them, and restore the saved ones.
+
 ## 0.7.1 (2026-10-11)
 ---
  - Show on the charging page whether the assumptions were saved in Home Assistant, where they are shared by all your devices. If a save fails, the values are kept in the browser and sent again the next time the page opens.

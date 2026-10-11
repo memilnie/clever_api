@@ -170,6 +170,7 @@ th { color: var(--ink2); font-weight: 500; font-size: 13px; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .field { display: flex; gap: 6px; align-items: center; margin: 6px 0; font-size: 14px; }
 .field label { flex: 1; } .field .unit { width: 62px; color: var(--ink2); font-size: 13px; }
+.undo { width: 26px; flex: none; } button.undo { padding: 2px 0; line-height: 1.2; }
 input[type=number] { width: 92px; background: var(--page); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
 td input[type=number] { width: 84px; }
 button { font: inherit; color: var(--ink); cursor: pointer; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
@@ -265,6 +266,9 @@ class CleverChargingPanel extends HTMLElement {
     this.shadowRoot.addEventListener('click', ev => {
       if (ev.target.closest('#all')) { this._all = true; this._draw(); }
       if (ev.target.closest('#reset')) this._reset();
+      if (ev.target.closest('#restore')) this._restore();
+      const one = ev.target.closest('[data-default]');
+      if (one) { this._set[one.dataset.default] = DEFAULTS[one.dataset.default]; this._persist(); this._draw(); }
     });
   }
 
@@ -291,16 +295,29 @@ class CleverChargingPanel extends HTMLElement {
       this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="wrap"><div class="note">Opladningerne kunne ikke hentes: ${esc(error?.message || error)}</div></div>`;
       return;
     }
+    // A read-only provider still lets you try other values; they are just not saved.
     this._readOnly = !!provider.readOnly;
     // Values the server could not save last time are used and sent again; otherwise the server's copy.
-    const unsaved = this._readOnly ? null : readUnsaved(), saved = unsaved || this._data.settings || {};
-    this._set = {...DEFAULTS, ...saved, months: {...(saved.months || {})}};
-    this._status = '';
+    const unsaved = this._readOnly ? null : readUnsaved();
+    this._apply(unsaved || this._data.settings);
     this._draw();
     if (unsaved) this._persist();
   }
 
+  _apply(saved) {
+    saved = saved || {};
+    this._set = {...DEFAULTS, ...saved, months: {...(saved.months || {})}};
+    this._status = '';
+  }
+
+  // Back to the values that are saved on the server.
+  _restore() {
+    this._apply(this._data.settings);
+    this._draw();
+  }
+
   _persist() {
+    if (this._readOnly) { this._status = 'Du prøver andre værdier. De gemmes ikke.'; return; }
     clearTimeout(this._timer);
     this._timer = setTimeout(async () => {
       try {
@@ -325,7 +342,7 @@ class CleverChargingPanel extends HTMLElement {
 
   _changed(ev) {
     const t = ev.target, set = this._set;
-    if (!set || this._readOnly || !(t.dataset.cs || t.dataset.cm)) return;
+    if (!set || !(t.dataset.cs || t.dataset.cm)) return;
     const num = t.value.trim() === '' ? null : parseFloat(t.value.replace(',', '.'));
     if (t.dataset.cs) {
       const key = t.dataset.cs;
@@ -343,7 +360,9 @@ class CleverChargingPanel extends HTMLElement {
 
   _draw() {
     const set = this._set, data = this._data, model = buildModel(data, set), t = model.total, y = model.year, shown = model.shown;
-    const field = (key, label, unit, step = 'any') => `<div class="field"><label>${label}</label><input type="number" step="${step}" data-cs="${key}" value="${set[key] ?? ''}"><span class="unit">${unit}</span></div>`;
+    // A value that differs from the default gets a button that puts the default back.
+    const undo = key => set[key] !== DEFAULTS[key] ? `<button class="undo" data-default="${key}" title="Tilbage til standardværdien ${esc(String(DEFAULTS[key] ?? 'fra dine opladninger').replace('.', ','))}" aria-label="Tilbage til standardværdien">↺</button>` : '<span class="undo"></span>';
+    const field = (key, label, unit, step = 'any') => `<div class="field"><label>${label}</label><input type="number" step="${step}" data-cs="${key}" value="${set[key] ?? ''}"><span class="unit">${unit}</span>${undo(key)}</div>`;
     const check = (key, label) => `<label class="field"><input type="checkbox" data-cs="${key}" ${set[key] ? 'checked' : ''}> ${label}</label>`;
     const diff = t.own - t.clever, sessions = [...model.rows].reverse().slice(0, this._all ? 2000 : 15);
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="wrap">
@@ -388,12 +407,12 @@ class CleverChargingPanel extends HTMLElement {
           ${field('chargerPrice', 'Ladeboks og installation', 'kr.')}${field('lifetime', 'Afskrives over', 'år')}${field('extraMonthly', 'Løbende udgift', 'kr./md.')}
           <div class="small muted" style="margin:8px 0 4px">Udeladning uden abonnement</div>
           ${field('publicFast', 'Hurtig- og lynladning', 'kr./kWh')}${field('publicAc', 'Almindelig ladestander', 'kr./kWh')}
-          <p class="small muted" id="status" aria-live="polite">${esc(this._readOnly ? 'Forudsætningerne hentes fra Home Assistant og ændres på siden Opladning dér.' : this._status || 'Dine værdier gemmes på serveren og er de samme på alle dine enheder.')}</p>
-          ${this._readOnly ? '' : '<button id="reset">Nulstil til standardværdier</button>'}
+          <p class="small muted" id="status" aria-live="polite">${esc(this._status || (this._readOnly ? 'Her kan du prøve andre værdier; de gemmes ikke. De gemte værdier rettes på siden Opladning i Home Assistant.' : 'Dine værdier gemmes på serveren og er de samme på alle dine enheder.'))}</p>
+          ${this._readOnly ? '<button id="restore">Gendan de gemte værdier</button> ' : ''}<button id="reset">${this._readOnly ? 'Prøv standardværdierne' : 'Nulstil til standardværdier'}</button>
           <p class="small muted">Standardværdierne er fra oktober 2026: Circle K's lynpris, Clevers pris uden abonnement på almindelige ladere, og de tariffer og afgifter Clever selv oplyste for september.</p></div>
         <div class="card section"><h2>Et år frem</h2>
           ${field('km', 'Forventet kørsel', 'km/år', '1000')}${field('kwh100', 'Forbrug', 'kWh/100 km')}
-          <div class="field"><label>Andel ladet hjemme</label><input type="number" data-cs="homeShare" value="${set.homeShare ?? ''}" placeholder="${Math.round(t.homeShare * 100)}"><span class="unit">%</span></div>
+          <div class="field"><label>Andel ladet hjemme</label><input type="number" data-cs="homeShare" value="${set.homeShare ?? ''}" placeholder="${Math.round(t.homeShare * 100)}"><span class="unit">%</span>${undo('homeShare')}</div>
           <dl><dt>Forbrug</dt><dd>${kr0(y.kwhYear)} kWh om året</dd>
             <dt>Clever</dt><dd><b>${kr0(y.clever)} kr.</b></dd>
             <dt>Egen ladeboks</dt><dd><b>${kr0(y.own)} kr.</b></dd>
@@ -401,7 +420,6 @@ class CleverChargingPanel extends HTMLElement {
             <dt>Skæringspunkt</dt><dd>${y.even != null && y.even > 0 ? `ca. ${kr0(y.even)} km om året. Over det er Clever billigst.` : 'Ingen: den ene løsning er billigst uanset kørsel.'}</dd></dl>
           <p class="small muted">Udregningen står under "Antagelser og regneeksempler".</p></div>
       </div></div></div>`;
-    if (this._readOnly) this.shadowRoot.querySelectorAll('input').forEach(input => { input.disabled = true; });
     // Inside Home Assistant the sidebar is opened from this button on narrow screens.
     if (this._hass && customElements.get('ha-menu-button')) {
       const menu = document.createElement('ha-menu-button');

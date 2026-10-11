@@ -26,6 +26,7 @@ from .const import (
 )
 from .coordinator import (
     CleverApiUpdateCoordinator,
+    car_settings_store,
     history_store,
     price_store,
     settings_store,
@@ -197,6 +198,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await history_store(hass, entry.entry_id).async_remove()
     await price_store(hass, entry.entry_id).async_remove()
     await settings_store(hass, entry.entry_id).async_remove()
+    await car_settings_store(hass, entry.entry_id).async_remove()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

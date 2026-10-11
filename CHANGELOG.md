@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0 (2026-10-11)
+---
+ - Add a second sidebar page, "Bil": kilometres, consumption and charging summarised per week, month and year, where the energy goes, when you charge, a few fun figures, and a list of service intervals.
+ - Keep the car's daily driving statistics and odometer, so the history grows beyond the month the car remembers.
+
 ## 0.9.0 (2026-10-11)
 ---
  - Read the car's battery level and odometer when a home charging session is connected, starts or stops charging, or ends. The Hyundai/Kia integration's sensors are found automatically; other cars are chosen in the options.

@@ -2,7 +2,8 @@
 
 ## 0.7.1 (2026-10-11)
 ---
- - Keep the assumptions entered on the charging page in the browser as well as in Home Assistant, show whether they were saved, and add a button to reset them.
+ - Show on the charging page whether the assumptions were saved in Home Assistant, where they are shared by all your devices. If a save fails, the values are kept in the browser and sent again the next time the page opens.
+ - Add a button to reset the assumptions to the defaults.
 
 ## 0.7.0 (2026-10-10)
 ---

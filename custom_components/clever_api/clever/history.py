@@ -21,6 +21,54 @@ def _session_key(session: dict[str, Any]) -> tuple[str, int, str]:
     )
 
 
+# A single poll cannot plausibly add more than this; larger jumps are a reset or a new session.
+MAX_STEP_KWH = 30.0
+
+
+def record_progress(
+    history: dict[str, Any],
+    session_start: datetime,
+    consumed_wh: float,
+    now: datetime,
+) -> bool:
+    """Add the energy charged since the last poll to the hour it was charged in.
+
+    Clever only reports when a session started and ended. Following the
+    running total while the car charges gives the hours the energy was
+    actually delivered in. The first poll of a session only sets the baseline,
+    so a session that was already under way is recorded from that point on.
+    Returns whether anything was stored.
+    """
+    profiles = history.setdefault("profiles", {})
+    key = session_start.isoformat()
+    profile = profiles.setdefault(key, {"hours": {}, "last_wh": None})
+    previous = profile["last_wh"]
+    if previous is not None and consumed_wh == previous:
+        return False
+    profile["last_wh"] = consumed_wh
+    if previous is None:
+        # Energy before the first poll cannot be placed in time, unless the session has just begun.
+        if consumed_wh > 0 and (now - session_start).total_seconds() <= 600:
+            previous = 0.0
+        else:
+            return True
+    step_kwh = (consumed_wh - previous) / 1000
+    if 0 < step_kwh <= MAX_STEP_KWH:
+        hour = str(int(now.timestamp()) // 3600 * 3600)
+        profile["hours"][hour] = round(profile["hours"].get(hour, 0) + step_kwh, 4)
+    return True
+
+
+def session_profiles(history: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Return recorded energy per hour, keyed by the session's start in epoch seconds."""
+    result: dict[str, dict[str, float]] = {}
+    for start, profile in (history.get("profiles") or {}).items():
+        hours = profile.get("hours") or {}
+        if hours:
+            result[str(int(datetime.fromisoformat(start).timestamp()))] = hours
+    return result
+
+
 def merge_history(
     stored: dict[str, Any] | None,
     records: list[ConsumptionRecord],
@@ -35,6 +83,7 @@ def merge_history(
     time for it, and is never dropped when it falls out of Clever's response.
     """
     history = {
+        **(stored or {}),
         "sessions": list((stored or {}).get("sessions") or []),
         "surcharges": dict((stored or {}).get("surcharges") or {}),
     }

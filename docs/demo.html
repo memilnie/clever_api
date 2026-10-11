@@ -44,9 +44,17 @@ for (let t = utc(2026, 6, 2); t < now - 86400; t += 86400) {
     sessions.push({start: Math.round(begin), stop: Math.round(begin + (2 + rnd() * 5) * 3600), kwh: Math.round((8 + rnd() * 20) * 100) / 100, home: false});
   }
 }
+// The newest home sessions were followed while charging: a car timer started them at 01:00.
+const profiles = {};
+for (const session of sessions.filter(s => s.home).slice(-6)) {
+  const hours = {}, day = new Date(session.start * 1000);
+  let left = session.kwh, t = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1, -1) / 1000;
+  while (left > 0.001) { hours[t] = Math.round(Math.min(11, left) * 1000) / 1000; left -= hours[t]; t += 3600; }
+  profiles[session.start] = hours;
+}
 let saved = {};
 document.querySelector('clever-charging-panel').provider = {
-  load: async () => ({sessions, surcharges: {'2026-10': 0.52}, spot: {start, prices, area: 'DK1'}, settings: saved, now}),
+  load: async () => ({sessions, profiles, surcharges: {'2026-10': 0.52}, spot: {start, prices, area: 'DK1'}, settings: saved, now}),
   save: async settings => { saved = settings; },
 };
 </script>

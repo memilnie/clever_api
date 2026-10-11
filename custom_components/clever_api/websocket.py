@@ -16,6 +16,8 @@ SETTINGS_SCHEMA = vol.Schema(
     {
         str: vol.Any(
             _NUMBER,
+            # The charging pattern: a fixed window, the cheapest hours, or from plug-in.
+            vol.In(["window", "cheapest", "now"]),
             # Per-month overrides: {"2026-09": {"fee": 849, "surcharge": 0.44}}
             {
                 vol.Match(r"^\d{4}-\d{2}$"): {

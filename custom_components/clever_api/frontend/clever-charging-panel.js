@@ -4,6 +4,9 @@
  *
  * Used as a Home Assistant sidebar panel (the `hass` property is set by Home Assistant)
  * and usable on any page by setting `provider = {load(), save(settings), readOnly}` instead.
+ *
+ * The `sections` attribute picks which parts to show, e.g. `sections="battery"`. Without it
+ * everything is shown except the battery section, which belongs on the car page.
  * All figures are calculated here in the browser from the data described in README.md.
  */
 
@@ -24,6 +27,7 @@ const FEE_FROM_2026_09 = 849, FEE_BEFORE = 799, FEE_WITHOUT_CHARGER = 899;
 const SURCHARGE_THRESHOLD = 0.89;
 // Away from home, a session averaging at least this power counts as fast charging.
 const FAST_KW = 25;
+const SECTIONS = ['summary', 'cost', 'energy', 'price', 'battery', 'months', 'explain', 'sessions', 'assumptions', 'year'];
 const PATTERNS = {window: 'Fast tidsrum', cheapest: 'Billigste timer', now: 'Straks ved tilslutning', measured: 'Målte ladetimer'};
 const two = n => String(n).padStart(2, '0');
 const windowText = set => `kl. ${two(set.windowFrom)}–${two(set.windowTo)}`;
@@ -216,7 +220,7 @@ function vehicleHtml(model, set, field) {
   if (!has) return '';
   const share = v.median != null && set.nominalCapacity ? ` (${kr0(v.median / set.nominalCapacity * 100)} % af ${nice(set.nominalCapacity)} kWh)` : '';
   const recent = [...v.car].reverse().slice(0, 12);
-  return `<div class="card section"><h2>Bil og batteri</h2>
+  return `<div class="card section" data-section="battery"><h2>Bil og batteri</h2>
     <p class="small muted" style="margin-top:-6px">Bilen aflæses, når en hjemmeopladning starter og slutter. Sammen med de kWh, Clever har målt, viser det forbruget og giver et skøn over batteriets brugbare kapacitet.</p>
     <dl><dt>Batteri nu</dt><dd>${now.soc != null ? kr0(now.soc) + ' %' : '–'}${now.range != null ? ` <span class="muted small">rækkevidde ${kr0(now.range)} km</span>` : ''}</dd>
       <dt>Kilometertal</dt><dd>${now.odometer != null ? kr0(now.odometer) + ' km' : '–'}</dd>
@@ -330,7 +334,7 @@ function explainHtml(model, set, data) {
         <tr><td class="muted">Pris pr. kWh</td><td></td><td></td>${cols.map(k => `<td class="num muted">${kr2(p.cost[k] / session.kwh)}</td>`).join('')}</tr></table></div>
       <p class="small muted">Prisen i hver time er (spotpris + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)}. Første time i eksemplet: (${kr3(p.slots[0].spot)} + ${kr2(set.addon)}) × ${kr2(1 + set.vat / 100)} = ${kr3(p.slots[0].price)} kr./kWh.${p.slots.some(x => x.estimated) ? ' * Timeprisen mangler, så periodens gennemsnit er brugt.' : ''}${p.overflow > 0.01 ? ` De sidste ${kr2(p.overflow)} kWh kan ikke nås på den tid med ${nice(set.power)} kW og er regnet til opladningens gennemsnitspris.` : ''} Med fast tidsrum lades først i tidsrummet; det, der ikke kan nås dér, lades fra tilslutning.</p>`;
   }
-  return `<div class="card section"><details open><summary>Antagelser og regneeksempler</summary>
+  return `<div class="card section" data-section="explain"><details open><summary>Antagelser og regneeksempler</summary>
     <h3>Antagelser</h3>
     <ul class="small">
       <li><b>Opladninger</b> kommer fra Clever: start, slut, kWh og om det var på din egen ladeboks. Clever oplyser ikke, i hvilke timer der faktisk blev ladet, kun hvornår bilen var tilsluttet.</li>
@@ -464,6 +468,24 @@ class CleverChargingPanel extends HTMLElement {
     this._draw();
   }
 
+  // Keep only the chosen sections. A page that picks sections brings its own heading.
+  _applySections() {
+    const root = this.shadowRoot, picked = this.getAttribute('sections');
+    const wanted = new Set(picked ? picked.split(/[\s,]+/).filter(Boolean) : SECTIONS.filter(name => name !== 'battery'));
+    root.querySelectorAll('[data-section]').forEach(el => { if (!wanted.has(el.dataset.section)) el.remove(); });
+    const main = root.querySelector('.main'), aside = root.querySelector('.aside'), grid = root.querySelector('.grid');
+    if (aside && !aside.children.length) { aside.remove(); if (grid) grid.style.gridTemplateColumns = '1fr'; }
+    if (main && !main.children.length) { main.remove(); if (grid) grid.style.gridTemplateColumns = '1fr'; }
+    if (picked) {
+      root.querySelector('header')?.remove();
+      root.querySelector('.wrap').style.padding = '0';
+      this.style.background = 'transparent'; this.style.minHeight = '0';
+      // The first card of a column should not push itself down.
+      root.querySelectorAll('.main > :first-child, .aside > :first-child').forEach(el => { el.style.marginTop = '0'; });
+      if (grid && !root.querySelector('.tiles')) grid.style.marginTop = '0';
+    }
+  }
+
   _draw() {
     const set = this._set, data = this._data, model = buildModel(data, set), t = model.total, y = model.year, shown = model.shown;
     // A value that differs from the default gets a button that puts the default back.
@@ -476,17 +498,17 @@ class CleverChargingPanel extends HTMLElement {
       <header><span id="menu"></span><div><h1>Opladning</h1><div class="small muted">Dine opladninger hos Clever, og hvad de samme kWh ville have kostet med din egen ladeboks.</div></div></header>
       ${data.sessions.length ? '' : '<div class="note">Der er endnu ingen opladninger. De dukker op, når Clever har rapporteret den første afsluttede opladning.</div>'}
       ${data.spot.prices.length ? '' : '<div class="note">Timepriserne kunne ikke hentes fra Energi Data Service, så hjemmestrøm er regnet med en fast gennemsnitspris.</div>'}
-      <div class="tiles">
+      <div class="tiles" data-section="summary">
         <div class="card tile"><div class="label">Ladet i perioden</div><div class="value">${kr0(t.kwh)} kWh</div><div class="sub">${t.n} opladninger over ${t.months} måneder</div></div>
         <div class="card tile"><div class="label">Hjemme</div><div class="value">${kr0(t.homeShare * 100)} %</div><div class="sub">${kr0(t.home)} kWh hjemme, ${kr0(t.outFast)} hurtiglader, ${kr0(t.outAc)} anden udeladning</div></div>
         <div class="card tile"><div class="label">Clever har kostet</div><div class="value">${kr0(t.clever)} kr.</div><div class="sub">${kr2(t.kwh ? t.clever / t.kwh : null)} kr./kWh</div></div>
         <div class="card tile"><div class="label">Egen ladeboks ville koste</div><div class="value">${kr0(t.own)} kr.</div><div class="sub">${kr2(t.kwh ? t.own / t.kwh : null)} kr./kWh</div></div>
         <div class="card tile"><div class="label">${diff >= 0 ? 'Clever er billigere med' : 'Egen ladeboks er billigere med'}</div><div class="value">${kr0(Math.abs(diff))} kr.</div><div class="sub">i perioden, med dine forudsætninger</div></div>
       </div>
-      <div class="grid"><div>
-        <div class="card"><h2>Pris pr. måned</h2>${barChart(shown, [{key: 'clever', name: 'Clever', color: 'var(--c1)'}, {key: 'own', name: 'Egen ladeboks', color: 'var(--c2)'}], {unit: 'kr.'})}</div>
-        <div class="card section"><h2>Ladet pr. måned</h2>${barChart(shown, [{key: 'home', name: 'Hjemme', color: 'var(--c3)'}, {key: 'out', name: 'Ude', color: 'var(--c4)'}], {stacked: true, unit: 'kWh'})}</div>
-        <div class="card section"><h2>Hvad strømmen koster hjemme</h2>
+      <div class="grid"><div class="main">
+        <div class="card" data-section="cost"><h2>Pris pr. måned</h2>${barChart(shown, [{key: 'clever', name: 'Clever', color: 'var(--c1)'}, {key: 'own', name: 'Egen ladeboks', color: 'var(--c2)'}], {unit: 'kr.'})}</div>
+        <div class="card section" data-section="energy"><h2>Ladet pr. måned</h2>${barChart(shown, [{key: 'home', name: 'Hjemme', color: 'var(--c3)'}, {key: 'out', name: 'Ude', color: 'var(--c4)'}], {stacked: true, unit: 'kWh'})}</div>
+        <div class="card section" data-section="price"><h2>Hvad strømmen koster hjemme</h2>
           <p class="small muted" style="margin-top:-6px">Prisen pr. kWh på din egen måler for periodens ${kr0(t.home)} kWh hjemme, alt efter hvornår der lades. Priserne er inkl. ${kr2(set.addon)} kr./kWh i tariffer og afgifter og ${kr0(set.vat)} % moms.</p>
           <div class="scroll"><table><tr><th>Lademønster</th><th class="num">kr./kWh</th><th class="num">I alt</th><th></th></tr>
             ${[['window', t.homeWindow], ['cheapest', t.homeCheapest], ['now', t.homeNow]].map(([key, cost]) => `<tr><td>${esc(patternText(key, set))}</td><td class="num">${kr2(t.home ? cost / t.home : null)}</td><td class="num">${kr0(cost)} kr.</td><td class="small muted">${key === set.mode ? 'valgt' : ''}</td></tr>`).join('')}
@@ -500,7 +522,7 @@ class CleverChargingPanel extends HTMLElement {
           ${barChart(model.day, [{key: 'kwh', name: 'kWh ladet i timen', color: 'var(--c3)'}], {unit: 'kWh'})}
         </div>
         ${vehicleHtml(model, set, field)}
-        <div class="card section"><h2>Måned for måned</h2>
+        <div class="card section" data-section="months"><h2>Måned for måned</h2>
           <p class="small muted" style="margin-top:-6px">Abonnement, energitillæg og tilbagebetaling kan rettes, så de passer med dine fakturaer. Et tomt felt bruger standardværdien.</p>
           <div class="scroll"><table>
             <tr><th>Måned</th><th class="num">kWh</th><th class="num">Hjemme</th><th class="num">Strømpris hjemme</th><th>Abonnement</th><th>Energitillæg kr./kWh</th><th>Tilbagebetaling kr./kWh</th><th class="num">Clever</th><th class="num">Egen boks</th></tr>
@@ -512,15 +534,15 @@ class CleverChargingPanel extends HTMLElement {
             <tr><th>I alt</th><th class="num">${kr0(t.kwh)}</th><th class="num">${kr0(t.home)}</th><th class="num">${kr2(t.homePrice)}</th><th></th><th></th><th></th><th class="num">${kr0(t.clever)}</th><th class="num">${kr0(t.own)}</th></tr>
           </table></div></div>
         ${explainHtml(model, set, data)}
-        <div class="card section"><h2>Opladninger</h2><div class="scroll"><table>
+        <div class="card section" data-section="sessions"><h2>Opladninger</h2><div class="scroll"><table>
           <tr><th>Start</th><th>Sted</th><th class="num">Tilsluttet</th><th class="num">kWh</th><th class="num">Egen boks</th><th class="num">kr./kWh</th><th>Grundlag</th></tr>
           ${sessions.map(s => `<tr><td>${esc(fmtFull.format(new Date(s.start * 1000)))}</td><td>${s.home ? 'Hjemme' : s.fast ? 'Ude, hurtiglader' : 'Ude'}</td>
             <td class="num">${kr2((s.stop - s.start) / 3600)} t</td><td class="num">${kr2(s.kwh)}</td>
             <td class="num">${kr0(s.plan ? s.homeCost : s.outCost)} kr.</td><td class="num">${kr2((s.plan ? s.homeCost : s.outCost) / s.kwh)}</td>
             <td class="small muted">${s.plan ? esc(patternText(s.pattern, set)) : 'pris uden abonnement'}</td></tr>`).join('')}
         </table></div>${model.rows.length > 15 && !this._all ? `<p><button id="all">Vis alle ${model.rows.length}</button></p>` : ''}</div>
-      </div><div>
-        <div class="card"><h2>Forudsætninger</h2>
+      </div><div class="aside">
+        <div class="card" data-section="assumptions"><h2>Forudsætninger</h2>
           ${check('sinceHome', 'Regn kun fra første hjemmeopladning')}
           <div class="small muted" style="margin:8px 0 4px">Strøm på egen måler</div>
           ${field('addon', 'Tariffer og afgifter', 'kr./kWh')}${field('vat', 'Moms', '%')}${field('power', 'Ladeeffekt', 'kW')}
@@ -535,7 +557,7 @@ class CleverChargingPanel extends HTMLElement {
           <p class="small muted" id="status" aria-live="polite">${esc(this._status || (this._readOnly ? 'Her kan du prøve andre værdier; de gemmes ikke. De gemte værdier rettes på siden Opladning i Home Assistant.' : 'Dine værdier gemmes på serveren og er de samme på alle dine enheder.'))}</p>
           ${this._readOnly ? '<button id="restore">Gendan de gemte værdier</button> ' : ''}<button id="reset">${this._readOnly ? 'Prøv standardværdierne' : 'Nulstil til standardværdier'}</button>
           <p class="small muted">Standardværdierne er fra oktober 2026: Circle K's lynpris, Clevers pris uden abonnement på almindelige ladere, og de tariffer og afgifter Clever selv oplyste for september.</p></div>
-        <div class="card section"><h2>Et år frem</h2>
+        <div class="card section" data-section="year"><h2>Et år frem</h2>
           ${field('km', 'Forventet kørsel', 'km/år', '1000')}${field('kwh100', 'Forbrug', 'kWh/100 km')}
           <div class="field"><label>Andel ladet hjemme</label><input type="number" data-cs="homeShare" value="${set.homeShare ?? ''}" placeholder="${Math.round(t.homeShare * 100)}"><span class="unit">%</span>${undo('homeShare')}</div>
           <dl><dt>Forbrug</dt><dd>${kr0(y.kwhYear)} kWh om året</dd>
@@ -545,6 +567,7 @@ class CleverChargingPanel extends HTMLElement {
             <dt>Skæringspunkt</dt><dd>${y.even != null && y.even > 0 ? `ca. ${kr0(y.even)} km om året. Over det er Clever billigst.` : 'Ingen: den ene løsning er billigst uanset kørsel.'}</dd></dl>
           <p class="small muted">Udregningen står under "Antagelser og regneeksempler".</p></div>
       </div></div></div>`;
+    this._applySections();
     // Inside Home Assistant the sidebar is opened from this button on narrow screens.
     if (this._hass && customElements.get('ha-menu-button')) {
       const menu = document.createElement('ha-menu-button');

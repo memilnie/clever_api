@@ -187,6 +187,8 @@ hour, and the year ahead.
 
 ### The car and its battery
 
+This section is shown on the car page.
+
 Clever knows when the car is connected and charging; the car knows its battery
 level and odometer. When a home charging session is connected, starts or stops
 charging, or ends, the integration reads the car and keeps the values with the
@@ -220,6 +222,9 @@ A second sidebar page, **Bil**, starts from the car instead of the charger.
 
 ![The car page with summaries, energy use, charging habits and service intervals](docs/images/car-page.png)
 
+- **Readings from the car:** when the car was last read, what caused it (the
+  car was connected, charging started or stopped, or the car was disconnected),
+  and the battery level and odometer at that moment.
 - **Summaries per week, month and year:** kilometres driven, energy used from
   the battery, consumption per 100 km, number of charging sessions, energy
   charged, and how much of it at home and on fast chargers.
@@ -245,6 +250,25 @@ from the odometer.
 The service list is saved in Home Assistant, in
 `.storage/clever_api.car_settings.<entry id>`. To try the page without Home
 Assistant, open `docs/demo-car.html` the same way as the charging demo.
+
+### Using the pages elsewhere
+
+Both pages are web components, `<clever-charging-panel>` and
+`<clever-car-panel>`, in `custom_components/clever_api/frontend`. Outside Home
+Assistant they take their data from a `provider` object instead of `hass`; see
+`docs/demo.html` and `docs/demo-car.html`.
+
+The `sections` attribute picks which parts to show, so a dashboard can place
+them where it wants:
+
+| Component | Sections |
+|---|---|
+| `clever-charging-panel` | `summary` `cost` `energy` `price` `battery` `months` `explain` `sessions` `assumptions` `year` |
+| `clever-car-panel` | `summary` `readings` `periods` `energy` `habits` `fun` `battery` `service` |
+
+For example `<clever-car-panel sections="service">` shows only the service
+list. Without the attribute a component shows everything; the charging page
+leaves out `battery`, which the car page shows instead.
 
 ### Settings
 

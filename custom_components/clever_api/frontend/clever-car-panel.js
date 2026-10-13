@@ -5,8 +5,12 @@
  * Driving figures come from the car (the Hyundai/Kia integration's daily statistics and
  * odometer, kept by this integration), charging from Clever. Used as a Home Assistant sidebar
  * panel (the `hass` property is set by Home Assistant) or on any page by setting
- * `provider = {load(), saveCar(settings), readOnly}`.
+ * `provider = {load(), saveCar(settings), save(settings), readOnly}`.
+ *
+ * The `sections` attribute picks which parts to show, e.g. `sections="service"`.
  */
+
+import './clever-charging-panel.js';   // the battery section is a part of the charging overview
 
 // Starting points only; the right intervals are in the car's service book.
 const DEFAULT_SERVICES = [
@@ -22,6 +26,9 @@ const USES = [
   ['onboard_electronics_consumption', 'Elektronik', 'var(--c3)'], ['battery_care_consumption', 'Batteripleje', 'var(--c4)'],
 ];
 const WEEKDAYS = ['man', 'tir', 'ons', 'tor', 'fre', 'lør', 'søn'];
+const SECTIONS = ['summary', 'readings', 'periods', 'energy', 'habits', 'fun', 'battery', 'service'];
+// Why the car was read: the moments of a home charging session the integration reacts to.
+const EVENTS = {connected: 'Bilen blev sat til laderen', charging_started: 'Ladning startede', charging_stopped: 'Ladning stoppede', disconnected: 'Bilen blev taget fra laderen', seen: 'Home Assistant startede under en opladning'};
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const n0 = v => v == null || isNaN(v) ? '–' : Math.round(v).toLocaleString('da-DK');
@@ -103,7 +110,12 @@ export function carModel(data, set, period) {
   });
   const next = services.filter(s => s.expected != null).sort((a, b) => a.expected - b.expected)[0] || null;
 
+  // Every time the integration read the car, newest first, with what caused it.
+  const readings = Object.entries(data.vehicle || {}).flatMap(([start, list]) => list.map(r => ({...r, session: +start})))
+    .sort((a, b) => b.time - a.time || (a.event === 'charging_started' ? -1 : 1));
+
   return {
+    readings,
     rows: rows.slice(-spec.keep).map(b => ({...b})), driving, sessions, car, odometerNow, kmRecent, usedRecent, kmPerDay,
     per100Recent: kmRecent ? usedRecent / kmRecent * 100 : null, kmAll, usedAll, uses, regenerated, weekdays, hours,
     longestDay, biggest, busiest, kwhAll, services, next, days: driving.length,
@@ -209,6 +221,7 @@ class CleverCarPanel extends HTMLElement {
 
   _clicked(ev) {
     const t = ev.target;
+    if (t.closest('#allreadings')) { this._allReadings = true; return this._draw(); }
     if (t.closest('[data-period]')) { this._period = t.closest('[data-period]').dataset.period; return this._draw(); }
     if (t.closest('#add')) { this._set.services.push({id: 's' + Date.now().toString(36), name: 'Nyt punkt', km: null, months: 12, last_km: null, last_date: null}); this._persist(); return this._draw(); }
     if (t.closest('[data-remove]')) { this._set.services = this._set.services.filter(s => s.id !== t.closest('[data-remove]').dataset.remove); this._persist(); return this._draw(); }
@@ -236,6 +249,29 @@ class CleverCarPanel extends HTMLElement {
     this._persist(); this._draw();
   }
 
+  // Keep only the chosen sections, and fill in the battery section from the charging overview.
+  _applySections() {
+    const root = this.shadowRoot, picked = this.getAttribute('sections');
+    const wanted = new Set(picked ? picked.split(/[\s,]+/).filter(Boolean) : SECTIONS);
+    root.querySelectorAll('[data-section]').forEach(el => { if (!wanted.has(el.dataset.section)) el.remove(); });
+    const pair = root.querySelector('[data-pair]');
+    if (pair && pair.children.length < 2) { pair.style.gridTemplateColumns = '1fr'; if (!pair.children.length) pair.remove(); }
+    const slot = root.getElementById('battery');
+    if (slot) {
+      const battery = document.createElement('clever-charging-panel');
+      battery.setAttribute('sections', 'battery');
+      if (this._provider) battery.provider = this._provider; else battery.hass = this._hass;
+      slot.appendChild(battery);
+    }
+    if (picked) {
+      root.querySelector('header')?.remove();
+      root.querySelector('.wrap').style.padding = '0';
+      this.style.background = 'transparent'; this.style.minHeight = '0';
+      const first = root.querySelector('.wrap > :first-child');
+      if (first) first.style.marginTop = '0';
+    }
+  }
+
   _draw() {
     const set = this._set, data = this._data, m = carModel(data, set, this._period), car = m.car;
     const usedTotal = m.uses.reduce((a, u) => a + u.kwh, 0);
@@ -253,7 +289,7 @@ class CleverCarPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}</style><div class="wrap">
       <header><span id="menu"></span><div><h1>Bil</h1><div class="small muted">Kørsel fra bilen, opladninger fra Clever.</div></div></header>
       ${m.days || m.odometerNow != null ? '' : '<div class="note">Der er endnu ingen data fra bilen. Kørselsstatistik og kilometertal kommer fra Hyundai/Kia-integrationen; uden den vises kun opladningerne.</div>'}
-      <div class="tiles">
+      <div class="tiles" data-section="summary">
         <div class="card tile"><div class="label">Kilometertal</div><div class="value">${m.odometerNow != null ? n0(m.odometerNow) + ' km' : '–'}</div><div class="sub">${car.soc != null ? `batteri ${n0(car.soc)} %` : ''}${car.range != null ? ` · rækkevidde ${n0(car.range)} km` : ''}</div></div>
         <div class="card tile"><div class="label">Kørt seneste 30 dage</div><div class="value">${m.days ? n0(m.kmRecent) + ' km' : '–'}</div><div class="sub">${m.kmPerDay ? `${n0(m.kmPerDay)} km om dagen i snit` : 'kræver kørselsdata'}</div></div>
         <div class="card tile"><div class="label">Forbrug seneste 30 dage</div><div class="value">${m.per100Recent ? n1(m.per100Recent) + ' kWh/100 km' : '–'}</div><div class="sub">${m.days ? `${n0(m.usedRecent)} kWh fra batteriet` : ''}${car.consumption_30d != null ? ` · bilen siger ${n1(car.consumption_30d / 10)}` : ''}</div></div>
@@ -261,7 +297,14 @@ class CleverCarPanel extends HTMLElement {
         <div class="card tile"><div class="label">Næste på servicelisten</div><div class="value">${m.next ? esc(m.next.name) : '–'}</div><div class="sub">${m.next ? (m.next.expected < 0 ? `overskredet med ${n0(-m.next.expected)} dage` : `om ca. ${n0(m.next.expected)} dage`) : 'udfyld servicelisten nederst'}</div></div>
       </div>
 
-      <div class="card section"><h2>Opsummering</h2>
+      <div class="card section" data-section="readings"><h2>Aflæsninger fra bilen</h2>
+        <p class="small muted" style="margin-top:-6px">Bilen bliver vækket og aflæst, når en hjemmeopladning starter og slutter. ${m.readings.length ? `Senest ${esc(fmtFull.format(new Date(m.readings[0].time * 1000)))}: ${esc(EVENTS[m.readings[0].event] || m.readings[0].event).toLowerCase()}.` : 'Der er endnu ingen aflæsninger.'}</p>
+        ${m.readings.length ? `<div class="scroll"><table><tr><th>Tidspunkt</th><th>Anledning</th><th class="num">Batteri</th><th class="num">Kilometertal</th><th class="num">Rækkevidde</th></tr>
+          ${m.readings.slice(0, this._allReadings ? 500 : 8).map(r => `<tr><td>${esc(fmtFull.format(new Date(r.time * 1000)))}</td><td>${esc(EVENTS[r.event] || r.event)}</td>
+            <td class="num">${r.soc != null ? n0(r.soc) + ' %' : '–'}</td><td class="num">${r.odometer != null ? n0(r.odometer) + ' km' : '–'}</td><td class="num">${r.range != null ? n0(r.range) + ' km' : '–'}</td></tr>`).join('')}</table></div>
+          ${m.readings.length > 8 && !this._allReadings ? `<p style="margin-bottom:0"><button id="allreadings">Vis alle ${m.readings.length}</button></p>` : ''}` : ''}</div>
+
+      <div class="card section" data-section="periods"><h2>Opsummering</h2>
         <div class="tabs">${Object.entries(PERIODS).map(([key, p]) => `<button data-period="${key}" class="${this._period === key ? 'on' : ''}">${p.name}</button>`).join('')}</div>
         <div class="grid" style="margin-top:0"><div><h3 style="margin-top:0">Kørte km</h3>${bars(m.rows, 'km', 'var(--c1)', 'km')}</div>
           <div><h3 style="margin-top:0">Ladet kWh</h3>${bars(m.rows, 'kwh', 'var(--c3)', 'kWh')}</div></div>
@@ -271,19 +314,19 @@ class CleverCarPanel extends HTMLElement {
             <td class="num">${r.n}</td><td class="num">${n0(r.kwh)} kWh</td><td class="num">${n0(r.home)}</td><td class="num">${n0(r.fast)}</td></tr>`).join('')}</table></div>
         <p class="small muted">Km og forbrug kommer fra bilens daglige kørselsstatistik${m.from ? `, som er gemt siden ${esc(fmtDate.format(m.from))}` : ''}. Opladninger kommer fra Clever og går længere tilbage, så ældre perioder har kun opladninger. "Brugt fra batteriet" er uden ladetab; "Ladet" er det, laderen leverede.</p></div>
 
-      <div class="grid">
-        <div class="card"><h2>Hvor strømmen går hen</h2>
+      <div class="grid" data-pair>
+        <div class="card" data-section="energy"><h2>Hvor strømmen går hen</h2>
           ${usedTotal ? `<div class="split">${m.uses.filter(u => u.kwh > 0).map(u => `<div style="background:${u.color};flex:${u.kwh}" title="${esc(u.name)}: ${n0(u.kwh)} kWh"></div>`).join('')}</div>
             <table>${m.uses.map(u => `<tr><td><span class="swatch" style="background:${u.color}"></span>${u.name}</td><td class="num">${n0(u.kwh)} kWh</td><td class="num">${n1(u.kwh / usedTotal * 100)} %</td></tr>`).join('')}
               <tr><td class="muted">Genvundet ved opbremsning</td><td class="num muted">${n0(m.regenerated)} kWh</td><td class="num muted">${n1(m.regenerated / usedTotal * 100)} %</td></tr></table>
             <p class="small muted">Fordelingen af de ${n0(usedTotal)} kWh, bilen har brugt over ${m.days} dage med kørsel. Det genvundne er trukket fra motorens forbrug af bilen selv.</p>`
             : '<p class="muted small">Kræver bilens kørselsstatistik.</p>'}</div>
-        <div class="card"><h2>Hvornår du lader</h2>
+        <div class="card" data-section="habits"><h2>Hvornår du lader</h2>
           <h3 style="margin-top:0">Opladninger pr. ugedag</h3>${bars(m.weekdays, 'n', 'var(--c3)', 'opladninger')}
           <h3>Opladninger efter starttidspunkt</h3>${bars(m.hours, 'n', 'var(--c3)', 'opladninger')}</div>
       </div>
 
-      <div class="card section"><h2>Sjove tal</h2>
+      <div class="card section" data-section="fun"><h2>Sjove tal</h2>
         <dl>
           <dt>Længste køredag</dt><dd>${m.longestDay ? `${n0(m.longestDay.distance)} km, ${esc(fmtDate.format(m.longestDay.date))}` : '–'}</dd>
           <dt>Største opladning</dt><dd>${m.biggest ? `${n1(m.biggest.kwh)} kWh, ${esc(fmtFull.format(m.biggest.date))}${m.biggest.home ? ' hjemme' : ' ude'}` : '–'}</dd>
@@ -296,13 +339,16 @@ class CleverCarPanel extends HTMLElement {
           <dt>12 V-batteri</dt><dd>${car.battery_12v != null ? n0(car.battery_12v) + ' %' : '–'}</dd>
         </dl></div>
 
-      <div class="card section"><h2>Service og eftersyn</h2>
+      <div class="section" data-section="battery" id="battery"></div>
+
+      <div class="card section" data-section="service"><h2>Service og eftersyn</h2>
         <p class="small muted" style="margin-top:-6px">Skriv intervallet i km, måneder eller begge, og hvornår det sidst blev udført. Det, der først løber ud, bestemmer. Intervallerne nedenfor er kun udgangspunkter; de rigtige står i bilens servicebog.</p>
         <div class="scroll"><table><tr><th>Hvad</th><th>For hver km</th><th>For hver måned</th><th>Sidst udført</th><th>Ved km</th><th>Næste gang</th><th>Status</th><th></th></tr>
           ${m.services.map(service).join('') || '<tr><td colspan="8" class="muted">Ingen punkter endnu.</td></tr>'}</table></div>
         <p style="margin-bottom:0"><button id="add">Tilføj punkt</button> <span class="small muted" id="status" aria-live="polite">${esc(this._status || (this._readOnly ? 'Her kan du prøve andre værdier; de gemmes ikke. De gemte rettes på siden Bil i Home Assistant.' : 'Listen gemmes på serveren og er den samme på alle dine enheder.'))}</span></p>
         ${m.kmPerDay ? `<p class="small muted">"Km nås om" regner med de ${n0(m.kmPerDay)} km om dagen, du har kørt i snit de seneste 30 dage.</p>` : ''}</div>
     </div>`;
+    this._applySections();
     if (this._hass && customElements.get('ha-menu-button')) {
       const menu = document.createElement('ha-menu-button');
       menu.hass = this._hass; menu.narrow = this._narrow;

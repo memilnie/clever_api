@@ -10,7 +10,7 @@
  * The `sections` attribute picks which parts to show, e.g. `sections="service"`.
  */
 
-import './clever-charging-panel.js';   // the battery section is a part of the charging overview
+import {adaptTables} from './clever-charging-panel.js';   // the battery section is a part of the charging overview
 
 // Starting points only; the right intervals are in the car's service book.
 const DEFAULT_SERVICES = [
@@ -129,16 +129,16 @@ const STYLE = `
   --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
   color: var(--ink); background: var(--page); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100%; }
 * { box-sizing: border-box; }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 16px 16px 64px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 16px 16px 64px; container-type: inline-size; }
 header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
 h1 { font-size: 22px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; } h3 { font-size: 14px; margin: 16px 0 6px; }
 .muted { color: var(--ink2); } .small { font-size: 13px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .section { margin-top: 16px; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .tile .label { color: var(--ink2); font-size: 13px; } .tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; } .tile .sub { color: var(--ink2); font-size: 13px; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; margin-top: 16px; }
-@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+@container (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } }
 .legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink2); margin-bottom: 8px; flex-wrap: wrap; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
 .chart { display: flex; gap: 8px; }
@@ -151,6 +151,16 @@ h1 { font-size: 22px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; } h3 
 .xaxis { display: flex; font-size: 12px; color: var(--ink2); margin-top: 4px; } .xaxis span { flex: 1; text-align: center; white-space: nowrap; min-width: 0; }
 .split { display: flex; height: 22px; gap: 2px; border-radius: 4px; overflow: hidden; margin: 8px 0; }
 .scroll { overflow-x: auto; }
+table.stacked, table.stacked tbody, table.stacked tr, table.stacked td, table.stacked th { display: block; }
+table.stacked tr.head { display: none; }
+table.stacked tbody { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0 28px; }
+table.stacked tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+table.stacked td, table.stacked th { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 3px 0; border: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+table.stacked td[data-label]:not([data-label=""])::before, table.stacked th[data-label]:not([data-label=""])::before { content: attr(data-label); color: var(--ink2); font-size: 13px; font-weight: 400; text-align: left; flex: none; max-width: 55%; }
+table.stacked td:first-child, table.stacked th:first-child { font-weight: 600; text-align: left; }
+table.stacked td:first-child::before, table.stacked th:first-child::before { display: none; }
+table.stacked td:empty { display: none; }
+table.stacked td input { max-width: 60%; } table.stacked td:first-child input { width: 100%; max-width: 100%; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--ink2); font-weight: 500; font-size: 13px; }
@@ -181,6 +191,7 @@ class CleverCarPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({mode: 'open'});
+    adaptTables(this.shadowRoot, this);
     this._period = 'month';
     this.shadowRoot.addEventListener('click', ev => this._clicked(ev));
     this.shadowRoot.addEventListener('change', ev => this._changed(ev));
@@ -255,7 +266,7 @@ class CleverCarPanel extends HTMLElement {
     const wanted = new Set(picked ? picked.split(/[\s,]+/).filter(Boolean) : SECTIONS);
     root.querySelectorAll('[data-section]').forEach(el => { if (!wanted.has(el.dataset.section)) el.remove(); });
     const pair = root.querySelector('[data-pair]');
-    if (pair && pair.children.length < 2) { pair.style.gridTemplateColumns = '1fr'; if (!pair.children.length) pair.remove(); }
+    if (pair && pair.children.length < 2) { pair.style.gridTemplateColumns = 'minmax(0, 1fr)'; if (!pair.children.length) pair.remove(); }
     const slot = root.getElementById('battery');
     if (slot) {
       const battery = document.createElement('clever-charging-panel');

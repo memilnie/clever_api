@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 (2026-10-13)
+---
+ - Show on the car page when the car was read and what caused it: connected, charging started or stopped, or disconnected.
+ - Move the battery section from the charging page to the car page.
+ - Add a `sections` attribute to both page components, so their parts can be shown separately.
+
 ## 0.10.0 (2026-10-11)
 ---
  - Add a second sidebar page, "Bil": kilometres, consumption and charging summarised per week, month and year, where the energy goes, when you charge, a few fun figures, and a list of service intervals.

@@ -41,6 +41,19 @@ for (let t = utc(2026, 1, 12); t < now - day; t += day) {
   if (roll < 0.36) { const begin = t + (15 + rnd() * 4) * 3600; sessions.push({start: Math.round(begin), stop: Math.round(begin + (11 + rnd() * 4) * 3600), kwh: Math.round((14 + rnd() * 34) * 100) / 100, home: true}); }
   else if (roll < 0.45) { const begin = t + (8 + rnd() * 9) * 3600; sessions.push({start: Math.round(begin), stop: Math.round(begin + (18 + rnd() * 20) * 60), kwh: Math.round((22 + rnd() * 30) * 100) / 100, home: false}); }
 }
+// The car was read around the newest home sessions.
+const vehicle = {};
+let reading = total - 900;
+for (const session of sessions.filter(s => s.home).slice(-7)) {
+  reading += 110 + Math.round(rnd() * 80);
+  const gain = Math.round(session.kwh * 0.9 / 71.5 * 100), from = Math.min(95 - gain, 14 + Math.round(rnd() * 28));
+  vehicle[session.start] = [
+    {event: 'connected', time: session.start + 70, soc: from, odometer: reading, range: Math.round(from * 4.2)},
+    {event: 'charging_started', time: session.start + 70, soc: from, odometer: reading, range: Math.round(from * 4.2)},
+    {event: 'charging_stopped', time: session.stop - 5200, soc: from + gain, odometer: reading, range: Math.round((from + gain) * 4.2)},
+    {event: 'disconnected', time: session.stop + 40, soc: from + gain, odometer: reading, range: Math.round((from + gain) * 4.2)},
+  ];
+}
 let saved = {services: [
   {id: 'service', name: 'Service', km: 30000, months: 24, last_km: 120300, last_date: '2025-05-14'},
   {id: 'syn', name: 'Syn', km: null, months: 24, last_km: null, last_date: '2024-11-02'},
@@ -48,9 +61,10 @@ let saved = {services: [
   {id: 'filter', name: 'Kabinefilter', km: 15000, months: 12, last_km: 127000, last_date: null},
 ]};
 document.querySelector('clever-car-panel').provider = {
-  load: async () => ({sessions, driving, odometer, now, car_settings: saved,
+  load: async () => ({sessions, driving, odometer, now, car_settings: saved, vehicle, surcharges: {}, profiles: {}, settings: {}, spot: {start: 0, prices: [], area: 'DK1'},
     vehicle_now: {soc: 82, odometer: total, range: 318, consumption_30d: 171, battery_12v: 88, regenerated: 2412000}}),
   saveCar: async settings => { saved = settings; },
+  save: async () => {},
 };
 </script>
 </body>

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1 (2026-10-13)
+---
+ - Make both pages follow the space they are given: a table that is wider than its box is shown as one block per row, with the column heading before each value, and side by side when there is room.
+ - Use the width of the page itself, not of the window, to decide when the columns stack, so the pages also fit beside the sidebar and when placed in another page.
+ - Stop charts from pushing the page wider than a phone screen.
+
 ## 0.11.0 (2026-10-13)
 ---
  - Show on the car page when the car was read and what caused it: connected, charging started or stopped, or disconnected.

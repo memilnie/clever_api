@@ -64,6 +64,28 @@ const isFast = s => !s.home && s.kwh / Math.max((s.stop - s.start) / 3600, 1 / 6
    `now` fills from the moment the car is plugged in, `cheapest` picks the cheapest hours while it
    is connected, `window` uses the chosen hours of the day first, and `measured` is the energy
    that was actually recorded per hour, when the integration has followed the session. */
+// A table that is wider than its box is shown as one block per row, with the column heading
+// before each value. Measured against the space it actually has, so it follows the window,
+// the sidebar and whatever page the component is placed in.
+export function adaptTables(root, host) {
+  const fit = () => {
+    for (const table of root.querySelectorAll('table')) {
+      const head = table.rows[0];
+      if (!head || ![...head.cells].every(cell => cell.tagName === 'TH')) continue;
+      head.classList.add('head');
+      const labels = [...head.cells].map(cell => cell.textContent.trim());
+      for (const row of table.rows) if (row !== head) [...row.cells].forEach((cell, i) => { if (!cell.hasAttribute('colspan')) cell.dataset.label = labels[i] || ''; });
+      table.classList.remove('stacked');
+      if (table.offsetWidth > table.parentElement.clientWidth + 1) table.classList.add('stacked');
+    }
+  };
+  let queued = false;
+  const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; fit(); }); } };
+  new MutationObserver(later).observe(root, {childList: true, subtree: true});
+  new ResizeObserver(later).observe(host);
+  later();
+}
+
 export function sessionPlan(s, set, spot, fallback, profile) {
   const priceAt = t => { const raw = spot.prices[Math.floor((t - spot.start) / 3600)]; return {raw, spot: raw ?? fallback, price: ((raw ?? fallback) + set.addon) * (1 + set.vat / 100)}; };
   const slots = [];
@@ -241,16 +263,16 @@ const STYLE = `
   --page: var(--primary-background-color, #f9f9f7); --line: var(--divider-color, #e1e0d9); --c1: #2a78d6; --c2: #eb6834; --c3: #1baf7a; --c4: #eda100;
   color: var(--ink); background: var(--page); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100%; }
 * { box-sizing: border-box; }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 16px 16px 64px; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 16px 16px 64px; container-type: inline-size; }
 header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
 h1 { font-size: 22px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; } h3 { font-size: 14px; margin: 16px 0 6px; }
 .muted { color: var(--ink2); } .small { font-size: 13px; }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
 .section { margin-top: 16px; }
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 .tile .label { color: var(--ink2); font-size: 13px; } .tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; } .tile .sub { color: var(--ink2); font-size: 13px; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; margin-top: 16px; }
-@media (max-width: 960px) { .grid { grid-template-columns: 1fr; } }
+@container (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
 .legend { display: flex; gap: 16px; font-size: 13px; color: var(--ink2); margin-bottom: 8px; flex-wrap: wrap; }
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
 .chart { display: flex; gap: 8px; }
@@ -264,6 +286,16 @@ h1 { font-size: 22px; margin: 0; } h2 { font-size: 16px; margin: 0 0 12px; } h3 
 .col.stack .bar { width: 60%; border-radius: 0; } .col.stack .bar:first-child { border-radius: 4px 4px 0 0; }
 .xaxis { display: flex; font-size: 12px; color: var(--ink2); margin-top: 4px; } .xaxis span { flex: 1; text-align: center; white-space: nowrap; min-width: 0; }
 .scroll { overflow-x: auto; }
+table.stacked, table.stacked tbody, table.stacked tr, table.stacked td, table.stacked th { display: block; }
+table.stacked tr.head { display: none; }
+table.stacked tbody { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 0 28px; }
+table.stacked tr { padding: 8px 0; border-bottom: 1px solid var(--line); }
+table.stacked td, table.stacked th { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 3px 0; border: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+table.stacked td[data-label]:not([data-label=""])::before, table.stacked th[data-label]:not([data-label=""])::before { content: attr(data-label); color: var(--ink2); font-size: 13px; font-weight: 400; text-align: left; flex: none; max-width: 55%; }
+table.stacked td:first-child, table.stacked th:first-child { font-weight: 600; text-align: left; }
+table.stacked td:first-child::before, table.stacked th:first-child::before { display: none; }
+table.stacked td:empty { display: none; }
+table.stacked td input { max-width: 60%; } table.stacked td:first-child input { width: 100%; max-width: 100%; }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--ink2); font-weight: 500; font-size: 13px; }
@@ -368,6 +400,7 @@ class CleverChargingPanel extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({mode: 'open'});
+    adaptTables(this.shadowRoot, this);
     this._all = false;
     this.shadowRoot.addEventListener('change', ev => this._changed(ev));
     this.shadowRoot.addEventListener('click', ev => {
@@ -474,8 +507,8 @@ class CleverChargingPanel extends HTMLElement {
     const wanted = new Set(picked ? picked.split(/[\s,]+/).filter(Boolean) : SECTIONS.filter(name => name !== 'battery'));
     root.querySelectorAll('[data-section]').forEach(el => { if (!wanted.has(el.dataset.section)) el.remove(); });
     const main = root.querySelector('.main'), aside = root.querySelector('.aside'), grid = root.querySelector('.grid');
-    if (aside && !aside.children.length) { aside.remove(); if (grid) grid.style.gridTemplateColumns = '1fr'; }
-    if (main && !main.children.length) { main.remove(); if (grid) grid.style.gridTemplateColumns = '1fr'; }
+    if (aside && !aside.children.length) { aside.remove(); if (grid) grid.style.gridTemplateColumns = 'minmax(0, 1fr)'; }
+    if (main && !main.children.length) { main.remove(); if (grid) grid.style.gridTemplateColumns = 'minmax(0, 1fr)'; }
     if (picked) {
       root.querySelector('header')?.remove();
       root.querySelector('.wrap').style.padding = '0';
